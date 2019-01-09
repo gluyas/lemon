@@ -1,0 +1,17 @@
+[package]
+edition = '2018'
+name = "lemon"
+version = "0.1.0"
+authors = ["Marc <marc.gluyas@gmail.com>"]
+build = "build.rs"
+
+[build-dependencies]
+gl_generator = "*"
+
+[dependencies]
+lazy_static = "*"
+glutin = "*"
+cgmath = "*"
+png = "*"
+image = "*"
+rand = "0.4"
