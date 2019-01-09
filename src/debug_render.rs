@@ -21,9 +21,9 @@ pub struct DebugRender {
 impl DebugRender {
     pub fn new() -> Self {
         unsafe {
-            let program = gl_link_shaders(&[
-                gl_compile_shader(include_str!("shader/debug.vert.glsl"), gl::VERTEX_SHADER),
-                gl_compile_shader(include_str!("shader/debug.frag.glsl"), gl::FRAGMENT_SHADER),
+            let program = gl::link_shaders(&[
+                gl::compile_shader(include_str!("shader/debug.vert.glsl"), gl::VERTEX_SHADER),
+                gl::compile_shader(include_str!("shader/debug.frag.glsl"), gl::FRAGMENT_SHADER),
             ]);
             let u_camera = gl::GetUniformLocation(program, cstr!("u_camera")) as GLuint;
 
@@ -47,7 +47,7 @@ impl DebugRender {
 
     pub fn update_camera(&mut self, camera: &Mat4) {
         unsafe {
-            let program = gl_get(gl::CURRENT_PROGRAM);
+            let program = gl::get(gl::CURRENT_PROGRAM);
             {
                 gl::UseProgram(self.program);
                 gl::UniformMatrix4fv(self.u_camera as GLint, 1, gl::FALSE, camera.as_ptr());
@@ -63,21 +63,21 @@ impl DebugRender {
     pub fn draw_line(&mut self, color: &Vec3, frames: usize, points: &[Point3]) {
         if points.len() < 2 { panic!("attempted to draw debug line with <2 points"); }
         unsafe {
-            let vao = gl_get(gl::VERTEX_ARRAY_BINDING);
-            let vbo = gl_get(gl::ARRAY_BUFFER_BINDING);
+            let vao = gl::get(gl::VERTEX_ARRAY_BINDING);
+            let vbo = gl::get(gl::ARRAY_BUFFER_BINDING);
             {
                 let mut draw_cmd = mem::uninitialized::<DrawCmd>();
                 draw_cmd.len     = points.len();
                 draw_cmd.frames  = frames;
 
-                draw_cmd.vao = gl_gen_object(gl::GenVertexArrays);
+                draw_cmd.vao = gl::gen_object(gl::GenVertexArrays);
                 gl::BindVertexArray(draw_cmd.vao);
 
-                draw_cmd.vbo = gl_gen_object(gl::GenBuffers);
+                draw_cmd.vbo = gl::gen_object(gl::GenBuffers);
                 gl::BindBuffer(gl::ARRAY_BUFFER, draw_cmd.vbo);
-                gl_buffer_init::<Vec3>(gl::ARRAY_BUFFER, points.len() + 1, gl::STATIC_DRAW);
+                gl::buffer_init::<Vec3>(gl::ARRAY_BUFFER, points.len() + 1, gl::STATIC_DRAW);
 
-                gl_buffer_sub_data(gl::ARRAY_BUFFER, 0, slice::from_ref(color));
+                gl::buffer_sub_data(gl::ARRAY_BUFFER, 0, slice::from_ref(color));
                 gl::EnableVertexAttribArray(self.a_color);
                 gl::VertexAttribPointer(
                     self.a_color, 3, gl::FLOAT,
@@ -85,7 +85,7 @@ impl DebugRender {
                 );
                 gl::VertexAttribDivisor(self.a_color, 1);
 
-                gl_buffer_sub_data(gl::ARRAY_BUFFER, 1, points);
+                gl::buffer_sub_data(gl::ARRAY_BUFFER, 1, points);
                 gl::EnableVertexAttribArray(self.a_position);
                 gl::VertexAttribPointer(
                     self.a_position, 3, gl::FLOAT,
@@ -101,22 +101,22 @@ impl DebugRender {
 
     pub fn draw_axes(&mut self, scale: f32, frames: usize, transform: &Mat4) {
         unsafe {
-            let vao = gl_get(gl::VERTEX_ARRAY_BINDING);
-            let vbo = gl_get(gl::ARRAY_BUFFER_BINDING);
+            let vao = gl::get(gl::VERTEX_ARRAY_BINDING);
+            let vbo = gl::get(gl::ARRAY_BUFFER_BINDING);
             {
                 let mut draw_cmd = mem::uninitialized::<DrawCmd>();
                 draw_cmd.len     = 6;
                 draw_cmd.frames  = frames;
 
-                draw_cmd.vao = gl_gen_object(gl::GenVertexArrays);
+                draw_cmd.vao = gl::gen_object(gl::GenVertexArrays);
                 gl::BindVertexArray(draw_cmd.vao);
 
-                draw_cmd.vbo = gl_gen_object(gl::GenBuffers);
+                draw_cmd.vbo = gl::gen_object(gl::GenBuffers);
                 gl::BindBuffer(gl::ARRAY_BUFFER, draw_cmd.vbo);
 
                 let origin    = transform.transform_point(point3!()).to_vec();
                 let transform = |v: Vec3| transform.transform_point(point3!(scale*v)).to_vec();
-                gl_buffer_data(gl::ARRAY_BUFFER, &[
+                gl::buffer_data(gl::ARRAY_BUFFER, &[
                     VEC3_X, transform(VEC3_X), VEC3_X, origin,
                     VEC3_Y, transform(VEC3_Y), VEC3_Y, origin,
                     VEC3_Z, transform(VEC3_Z), VEC3_Z, origin,
@@ -146,9 +146,9 @@ impl DebugRender {
     pub fn render_frame(&mut self) {
         if self.draw_cmds.is_empty() { return; }
         unsafe {
-            let program = gl_get(gl::CURRENT_PROGRAM);
-            let vao     = gl_get(gl::VERTEX_ARRAY_BINDING);
-            let vbo     = gl_get(gl::ARRAY_BUFFER_BINDING);
+            let program = gl::get(gl::CURRENT_PROGRAM);
+            let vao     = gl::get(gl::VERTEX_ARRAY_BINDING);
+            let vbo     = gl::get(gl::ARRAY_BUFFER_BINDING);
             {
                 gl::UseProgram(self.program);
 

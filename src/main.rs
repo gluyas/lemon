@@ -108,9 +108,7 @@ macro_rules! color {
     );
 }
 
-mod gl {
-    include!(concat!(env!("OUT_DIR"), "/gl_bindings.rs"));
-}
+mod gl;
 use crate::gl::types::*;
 
 mod lemon;
@@ -210,7 +208,7 @@ const LEMON_FRICTION: f32 = 1.55;
 
 const LEMON_ANGULAR_DRAG: f32 = 0.002;
 
-const WIDTH: usize = 720;
+const WIDTH: usize = 1280;
 const HEIGHT: usize = 720;
 
 fn main() {
@@ -242,9 +240,9 @@ fn main() {
             position: point3!(),
         };
 
-        let camera_ubo = gl_gen_object(gl::GenBuffers);
+        let camera_ubo = gl::gen_object(gl::GenBuffers);
         gl::BindBuffer(gl::UNIFORM_BUFFER, camera_ubo);
-        gl_buffer_init::<Camera>(gl::UNIFORM_BUFFER, 1, gl::DYNAMIC_DRAW);
+        gl::buffer_init::<Camera>(gl::UNIFORM_BUFFER, 1, gl::DYNAMIC_DRAW);
 
         let camera_binding_index: GLuint = 1;
         gl::BindBufferBase(gl::UNIFORM_BUFFER, camera_binding_index, camera_ubo);
@@ -256,9 +254,9 @@ fn main() {
     lemon.phys.position = point3!(0.0, 0.0, 5.0);
 
     let (vao, verts, normals, indices, vbo_transform) = unsafe {
-        let program = gl_link_shaders(&[
-            gl_compile_shader(include_str!("shader/lemon.vert.glsl"), gl::VERTEX_SHADER),
-            gl_compile_shader(include_str!("shader/lemon.frag.glsl"), gl::FRAGMENT_SHADER),
+        let program = gl::link_shaders(&[
+            gl::compile_shader(include_str!("shader/lemon.vert.glsl"), gl::VERTEX_SHADER),
+            gl::compile_shader(include_str!("shader/lemon.frag.glsl"), gl::FRAGMENT_SHADER),
         ]);
         gl::UseProgram(program);
 
@@ -274,7 +272,7 @@ fn main() {
         //let u_point_light = gl::GetUniformLocation(program, cstr!("u_point_light"));
         //gl::Uniform4fv(u_point_light, 1, as_ptr(&vec3!(2.0, 2.0, 2.0)));
 
-        let txo_normal_map = gl_gen_object(gl::GenTextures);
+        let txo_normal_map = gl::gen_object(gl::GenTextures);
         let normal_map = lemon.make_normal_map();
         gl::ActiveTexture(gl::TEXTURE0);
         gl::BindTexture(gl::TEXTURE_2D, txo_normal_map);
@@ -295,13 +293,13 @@ fn main() {
         let u_normal_map = gl::GetUniformLocation(program, cstr!("u_normal_map"));
         gl::Uniform1i(u_normal_map, 0);
 
-        let vao = gl_gen_object(gl::GenVertexArrays);
+        let vao = gl::gen_object(gl::GenVertexArrays);
         gl::BindVertexArray(vao);
 
         let (verts, uvs, normals, indices) = lemon.make_mesh();
 
         let a_transform   = gl::GetAttribLocation(program, cstr!("a_transform")) as GLuint;
-        let vbo_transform = gl_gen_object(gl::GenBuffers);
+        let vbo_transform = gl::gen_object(gl::GenBuffers);
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transform);
         for i in 0..4 { // all 4 column vectors
             let a_transform = a_transform + i as GLuint;
@@ -314,29 +312,29 @@ fn main() {
         }
 
         let a_position   = gl::GetAttribLocation(program, cstr!("a_position")) as GLuint;
-        let vbo_position = gl_gen_object(gl::GenBuffers);
+        let vbo_position = gl::gen_object(gl::GenBuffers);
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo_position);
-        gl_buffer_data(gl::ARRAY_BUFFER, &verts, gl::STATIC_DRAW);
+        gl::buffer_data(gl::ARRAY_BUFFER, &verts, gl::STATIC_DRAW);
         gl::EnableVertexAttribArray(a_position);
         gl::VertexAttribPointer(a_position, 3, gl::FLOAT, gl::FALSE, 0, 0 as *const GLvoid);
 
         let a_normal   = gl::GetAttribLocation(program, cstr!("a_normal")) as GLuint;
-        let vbo_normal = gl_gen_object(gl::GenBuffers);
+        let vbo_normal = gl::gen_object(gl::GenBuffers);
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo_normal);
-        gl_buffer_data(gl::ARRAY_BUFFER, &normals, gl::STATIC_DRAW);
+        gl::buffer_data(gl::ARRAY_BUFFER, &normals, gl::STATIC_DRAW);
         gl::EnableVertexAttribArray(a_normal);
         gl::VertexAttribPointer(a_normal, 3, gl::FLOAT, gl::FALSE, 0, 0 as *const GLvoid);
 
         let a_uv   = gl::GetAttribLocation(program, cstr!("a_uv")) as GLuint;
-        let vbo_uv = gl_gen_object(gl::GenBuffers);
+        let vbo_uv = gl::gen_object(gl::GenBuffers);
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo_uv);
-        gl_buffer_data(gl::ARRAY_BUFFER, &uvs, gl::STATIC_DRAW);
+        gl::buffer_data(gl::ARRAY_BUFFER, &uvs, gl::STATIC_DRAW);
         gl::EnableVertexAttribArray(a_uv);
         gl::VertexAttribPointer(a_uv, 2, gl::FLOAT, gl::FALSE, 0, 0 as *const GLvoid);
 
-        let ebo = gl_gen_object(gl::GenBuffers);
+        let ebo = gl::gen_object(gl::GenBuffers);
         gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, ebo);
-        gl_buffer_data(gl::ELEMENT_ARRAY_BUFFER, &indices, gl::STATIC_DRAW);
+        gl::buffer_data(gl::ELEMENT_ARRAY_BUFFER, &indices, gl::STATIC_DRAW);
 
         (vao, verts, normals, indices, vbo_transform)
     };
@@ -387,7 +385,7 @@ fn main() {
                 WindowEvent::MouseWheel {
                     delta: MouseScrollDelta::LineDelta(_delta_x, delta_y), ..
                 } => {
-                    camera_distance -= delta_y * 0.2;
+                    camera_distance -= camera_distance * delta_y * PHYS_DELTA_TIME;
                     if camera_distance < 0.0 { camera_distance = 0.0; }
                     mouse_drag = mouse_drag.or(Some(vec2!())); // HACK: redraw on zoom
                 },
@@ -419,7 +417,7 @@ fn main() {
                         }
                     },
                     VirtualKeyCode::Left => if let ElementState::Pressed = state {
-                        if debug_pause && debug_frame_current > 0 { 
+                        if debug_pause && debug_frame_current > 0 {
                             debug_frame_current -= 1;
                             lemon.phys = debug_frame_store[debug_frame_current];
                         }
@@ -455,18 +453,28 @@ fn main() {
                 };
                 lemon.phys.orientation += angular_velocity / 2.0 * lemon.phys.orientation;
                 lemon.phys.orientation  = lemon.phys.orientation.normalize();
-                
+
+                let angular_drag = {
+                    let mag  = lemon.phys.angular_momentum.magnitude();
+                    if LEMON_ANGULAR_DRAG > mag {
+                        lemon.phys.angular_momentum
+                    } else {
+                        lemon.phys.angular_momentum / mag * LEMON_ANGULAR_DRAG
+                    }
+                };
+                lemon.phys.angular_momentum -= angular_drag;
+
                 debug_frame_store.push(lemon.phys);
             }
             if debug_draw_motion_vectors {
                 debug.draw_ray(
-                    &color!(0xFF50FFFF).truncate(), 1, &lemon.phys.position, 
+                    &color!(0xFF50FFFF).truncate(), 1, &lemon.phys.position,
                     &(lemon.phys.velocity / PHYS_DELTA_TIME),
                 );
                 debug.draw_ray(
-                    &color!(0xFFFF50FF).truncate(), 1, &lemon.phys.position, 
-                    & ( lemon.phys.get_inertia_inverse() 
-                      * lemon.phys.angular_momentum 
+                    &color!(0xFFFF50FF).truncate(), 1, &lemon.phys.position,
+                    & ( lemon.phys.get_inertia_inverse()
+                      * lemon.phys.angular_momentum
                       / PHYS_DELTA_TIME ),
                 );
             }
@@ -496,20 +504,7 @@ fn main() {
             if test_point.z <= 0.0 { // COLLISION RESPONSE
                 // push object out of plane // TODO: solve for velocity, orientation
                 let new_position     = lemon.phys.position - test_point.z * VEC3_Z;
-                
-                if !debug_pause {
-                    let angular_drag = {
-                        let mag  = lemon.phys.angular_momentum.magnitude();
-                        if LEMON_ANGULAR_DRAG > mag {
-                            lemon.phys.angular_momentum
-                        } else {
-                            lemon.phys.angular_momentum / mag * LEMON_ANGULAR_DRAG
-                        }
-                    };
-                    lemon.phys.angular_momentum -= angular_drag;
-                    lemon.phys.position          = new_position;
-                }
-                
+
                 let inertia_inverse  = lemon.phys.get_inertia_inverse();
                 let angular_velocity = inertia_inverse * lemon.phys.angular_momentum;
 
@@ -539,16 +534,17 @@ fn main() {
                 };
 
                 if !debug_pause {
+                    lemon.phys.position          = new_position;
                     lemon.phys.velocity         += (reaction + friction) / lemon.phys.mass;
                     lemon.phys.angular_momentum += offset.cross(reaction + friction);
                 }
                 if debug_draw_collision_response {
                     debug.draw_ray(
-                        &color!(0x0000AFFF).truncate(), 1, &point, 
+                        &color!(0x0000AFFF).truncate(), 1, &point,
                         &(friction / lemon.phys.mass / PHYS_DELTA_TIME)
                     );
                     debug.draw_ray(
-                        &color!(0xAF0000FF).truncate(), 1, &point, 
+                        &color!(0xAF0000FF).truncate(), 1, &point,
                         &(reaction / lemon.phys.mass / PHYS_DELTA_TIME)
                     );
                     debug.draw_ray(
@@ -562,17 +558,8 @@ fn main() {
             let floor_tangent = sphere_normal.cross(VEC3_Z) * lemon.r * 3.0;
 
             debug.draw_axes(0.5, 1, &lemon.phys.get_transform());
-            if false {
-                debug.draw_line(&color!(0x000000FF).truncate(), 1, &[
-                    test_point, floor_point
-                ]);
 
-                debug.draw_line(&color!(0x000000FF).truncate(), 1, &[
-                    floor_point - floor_tangent * 2.0 * lemon.r * 3.0,
-                    floor_point + floor_tangent * 2.0 * lemon.r * 3.0,
-                ]);
-            }
-            if true && debug_draw_colliders {
+            if debug_draw_colliders {
                 let position  = lemon.phys.position;
                 let transform = lemon.phys.get_transform();
                 let normal    = (transform * VEC4_Z).truncate();
@@ -591,7 +578,7 @@ fn main() {
 
                 debug.draw_line(&color!(0x000000FF).truncate(), 1, &[
                     position + normal, sphere_centre, position - normal,
-                    sphere_centre, sphere_closest,
+                    sphere_centre, test_point,
                 ]);
 
                 let world_axes_transform = Mat4::from_translation(vec3!(sphere_centre));
@@ -600,7 +587,7 @@ fn main() {
 
             unsafe {
                 gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transform);
-                gl_buffer_data(
+                gl::buffer_data(
                     gl::ARRAY_BUFFER,
                     slice::from_ref(&lemon.phys.get_transform()),
                     gl::DYNAMIC_DRAW
@@ -625,7 +612,7 @@ fn main() {
                 vec3!(lemon.phys.position).mul_element_wise(vec3!(1.0, 1.0, 0.5)) + 0.5*VEC3_Z
             );
             camera.position   = camera_focus - camera_dir * camera_distance;
-            camera.projection = perspective(Rad(camera_fovy), WIDTH as f32 / HEIGHT as f32, 0.1, 100.0);
+            camera.projection = perspective(Rad(camera_fovy), WIDTH as f32 / HEIGHT as f32, 0.1, 1000.0);
             camera.view = Mat4::look_at(
                 camera.position,
                 camera_focus + camera_dir,
@@ -636,7 +623,7 @@ fn main() {
 
             unsafe {
                 gl::BindBuffer(gl::UNIFORM_BUFFER, camera_ubo);
-                gl_buffer_data(gl::UNIFORM_BUFFER, slice::from_ref(&camera), gl::DYNAMIC_DRAW);
+                gl::buffer_data(gl::UNIFORM_BUFFER, slice::from_ref(&camera), gl::DYNAMIC_DRAW);
             }
             mouse_drag = None;
         }
@@ -764,147 +751,4 @@ fn as_ptr<R, P>(reference: &R) -> *const P {
 
 fn as_mut_ptr<R, P>(reference: &mut R) -> *mut P {
     reference as *mut R as *mut P
-}
-
-#[inline]
-unsafe fn gl_buffer_data<T>(target: GLenum, data: &[T], usage: GLenum) {
-    gl::BufferData(
-        target,
-        mem::size_of_val(data) as GLsizeiptr,
-        data.as_ptr() as *const GLvoid,
-        usage,
-    );
-}
-
-#[inline]
-unsafe fn gl_buffer_sub_data<T>(target: GLenum, offset: usize, data: &[T]) {
-    gl::BufferSubData(
-        target,
-        (offset  * mem::size_of::<T>()) as GLintptr,
-        mem::size_of_val(data) as GLsizeiptr,
-        data.as_ptr() as *const GLvoid,
-    );
-}
-
-#[inline]
-unsafe fn gl_buffer_init<T>(target: GLenum, count: usize, usage: GLenum) {
-    gl::BufferData(
-        target,
-        (mem::size_of::<T>() * count) as GLsizeiptr,
-        0 as *const GLvoid,
-        usage,
-    );
-}
-
-#[inline]
-unsafe fn gl_gen_object(gl_gen_callback: unsafe fn (GLsizei, *mut GLuint)) -> GLuint {
-    let mut name = GLuint::default();
-    gl_gen_callback(1, &mut name);
-    name
-}
-
-unsafe trait GlGet {
-    const GL_GET: unsafe fn (GLenum, *mut Self);
-}
-
-unsafe impl GlGet for GLboolean {
-    const GL_GET: unsafe fn (GLenum, *mut Self) = gl::GetBooleanv;
-}
-unsafe impl GlGet for GLint {
-    const GL_GET: unsafe fn (GLenum, *mut Self) = gl::GetIntegerv;
-}
-unsafe impl GlGet for GLuint {
-    const GL_GET: unsafe fn (GLenum, *mut Self) = {
-        unsafe fn gl_get(p: GLenum, r: *mut GLuint) { gl::GetIntegerv(p, r as *mut GLint); }
-        gl_get
-    };
-}
-unsafe impl GlGet for GLint64 {
-    const GL_GET: unsafe fn (GLenum, *mut Self) = gl::GetInteger64v;
-}
-unsafe impl GlGet for GLuint64 {
-    const GL_GET: unsafe fn (GLenum, *mut Self) = {
-        unsafe fn gl_get(p: GLenum, r: *mut GLuint64) { gl::GetInteger64v(p, r as *mut GLint64); }
-        gl_get
-    };
-}
-unsafe impl GlGet for GLfloat {
-    const GL_GET: unsafe fn (GLenum, *mut Self) = gl::GetFloatv;
-}
-unsafe impl GlGet for GLdouble {
-    const GL_GET: unsafe fn (GLenum, *mut Self) = gl::GetDoublev;
-}
-
-#[inline]
-unsafe fn gl_get<T: GlGet>(parameter: GLenum) -> T {
-    let mut result: T = mem::uninitialized(); T::GL_GET(parameter, &mut result);
-    result
-}
-
-fn gl_compile_shader(src: &str, ty: GLenum) -> GLuint {
-    unsafe {
-        let shader = gl::CreateShader(ty);
-        gl::ShaderSource(
-            shader, 1,
-            &(src.as_ptr() as *const GLchar) as *const *const _,
-            &(src.len() as GLint) as *const _
-        );
-        gl::CompileShader(shader);
-
-        // check shader compile errors
-        let mut status = gl::FALSE as GLint;
-        gl::GetShaderiv(shader, gl::COMPILE_STATUS, &mut status);
-
-        if status != (gl::TRUE as GLint) {
-            use std::str::from_utf8;
-
-            let mut len = 0;
-            gl::GetShaderiv(shader, gl::INFO_LOG_LENGTH, &mut len);
-            let mut buf = Vec::with_capacity(len as usize);
-            buf.set_len((len as usize) - 1); // subtract 1 to skip the trailing null character
-            gl::GetShaderInfoLog(
-                shader,
-                len,
-                ptr::null_mut(),
-                buf.as_mut_ptr() as *mut GLchar,
-            );
-            panic!(
-                "GLSL compile error:\n{}",
-                from_utf8(&buf).ok().expect("ShaderInfoLog not valid utf8")
-            );
-        }
-        shader
-    }
-}
-
-fn gl_link_shaders(shaders: &[GLuint]) -> GLuint {
-    unsafe {
-        let program = gl::CreateProgram();
-        for &shader in shaders { gl::AttachShader(program, shader); }
-        gl::LinkProgram(program);
-
-        {   // check link status
-            let mut status = gl::FALSE as GLint;
-            gl::GetProgramiv(program, gl::LINK_STATUS, &mut status);
-            if status != (gl::TRUE as GLint) {
-                use std::str::from_utf8;
-
-                let mut len = 0;
-                gl::GetProgramiv(program, gl::INFO_LOG_LENGTH, &mut len);
-                let mut buf = Vec::with_capacity(len as usize);
-                buf.set_len((len as usize) - 1); // subtract 1 to skip the trailing null character
-                gl::GetProgramInfoLog(
-                    program,
-                    len,
-                    ptr::null_mut(),
-                    buf.as_mut_ptr() as *mut GLchar,
-                );
-                panic!(
-                    "GLSL link error:\n{}",
-                    from_utf8(&buf).ok().expect("ProgramInfoLog not valid utf8")
-                );
-            }
-        }
-        program
-    }
 }
