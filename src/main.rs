@@ -251,7 +251,16 @@ fn main() {
     };
 
     let mut lemon = Lemon::new(0.58);
-    lemon.phys.position = point3!(0.0, 0.0, 5.0);
+    fn reset_lemon(lemon: &mut Lemon) {
+        lemon.phys.position         = point3!(0.0, 0.0, 2.0 + 3.0 * rand::random::<f32>());
+        lemon.phys.orientation      = Quat::from_axis_angle(
+                                          rand::random::<Vec3>().normalize(),
+                                          Deg(30.0 * (rand::random::<f32>() - 0.5)));
+        lemon.phys.velocity         = vec3!();
+        lemon.phys.angular_momentum = lemon.phys.get_inertia()
+                                    * 0.1 * (rand::random::<Vec3>() - vec3!(0.5, 0.5, 0.5))
+    }
+    reset_lemon(&mut lemon);
 
     let (vao, verts, normals, indices, vbo_transform) = unsafe {
         let program = gl::link_shaders(&[
@@ -429,9 +438,7 @@ fn main() {
                         }
                     },
                     VirtualKeyCode::Space => if let ElementState::Pressed = state {
-                        lemon.phys.position         = point3!(0.0, 0.0, 5.0);
-                        lemon.phys.angular_momentum = lemon.phys.get_inertia()
-                                                    * (rand::random::<Vec3>() * 0.04);
+                        reset_lemon(&mut lemon);
                     },
                     _ => (),
                 },
