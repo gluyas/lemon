@@ -201,12 +201,14 @@ const SLEEP_TIME: u32 = 30;
 const PHYS_DELTA_TIME: f32 = 1.0 / SLEEP_TIME as f32;
 
 const PHYS_GRAVITY: Vec3 = vec3!(0.0, 0.0, -0.015);
+const PHYS_MAX_BODIES: usize = 32;
 
 const LEMON_COLLISION_ELASTICITY: f32 = 0.15;
 
 const LEMON_FRICTION: f32 = 1.55;
 
 const LEMON_ANGULAR_DRAG: f32 = 0.002;
+
 
 const WIDTH: usize = 1280;
 const HEIGHT: usize = 720;
@@ -250,7 +252,14 @@ fn main() {
         (camera, camera_ubo, camera_binding_index)
     };
 
-    let mut lemon = Lemon::new(0.58);
+    let mut lemons = Vec::with_capacity(PHYS_MAX_BODIES);
+    fn spawn_lemon(lemons: &mut Vec<Lemon>) {
+        if lemons.len() >= PHYS_MAX_BODIES { return; }
+
+        let mut new_lemon = Lemon::new(0.58);
+        reset_lemon(&mut new_lemon);
+        lemons.push(new_lemon);
+    }
     fn reset_lemon(lemon: &mut Lemon) {
         lemon.phys.position         = point3!(0.0, 0.0, 2.0 + 3.0 * rand::random::<f32>());
         lemon.phys.orientation      = Quat::from_axis_angle(
@@ -260,9 +269,10 @@ fn main() {
         lemon.phys.angular_momentum = lemon.phys.get_inertia()
                                     * 0.1 * (rand::random::<Vec3>() - vec3!(0.5, 0.5, 0.5))
     }
-    reset_lemon(&mut lemon);
+    macro_rules! current_lemon { () => { lemons.last_mut().unwrap() } }
+    spawn_lemon(&mut lemons);
 
-    let (vao, verts, normals, indices, vbo_transform) = unsafe {
+    let (vao, verts, normals, indices, vbo_transforms) = unsafe {
         let program = gl::link_shaders(&[
             gl::compile_shader(include_str!("shader/lemon.vert.glsl"), gl::VERTEX_SHADER),
             gl::compile_shader(include_str!("shader/lemon.frag.glsl"), gl::FRAGMENT_SHADER),
@@ -282,7 +292,7 @@ fn main() {
         //gl::Uniform4fv(u_point_light, 1, as_ptr(&vec3!(2.0, 2.0, 2.0)));
 
         let txo_normal_map = gl::gen_object(gl::GenTextures);
-        let normal_map = lemon.make_normal_map();
+        let normal_map = current_lemon!().make_normal_map();
         gl::ActiveTexture(gl::TEXTURE0);
         gl::BindTexture(gl::TEXTURE_2D, txo_normal_map);
 
@@ -305,19 +315,21 @@ fn main() {
         let vao = gl::gen_object(gl::GenVertexArrays);
         gl::BindVertexArray(vao);
 
-        let (verts, uvs, normals, indices) = lemon.make_mesh();
+        let (verts, uvs, normals, indices) = current_lemon!().make_mesh();
 
-        let a_transform   = gl::GetAttribLocation(program, cstr!("a_transform")) as GLuint;
-        let vbo_transform = gl::gen_object(gl::GenBuffers);
-        gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transform);
+        let a_transform    = gl::GetAttribLocation(program, cstr!("a_transform")) as GLuint;
+        let vbo_transforms = gl::gen_object(gl::GenBuffers);
+        gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transforms);
+        gl::buffer_init::<Mat4>(gl::ARRAY_BUFFER, PHYS_MAX_BODIES, gl::STREAM_DRAW);
         for i in 0..4 { // all 4 column vectors
-            let a_transform = a_transform + i as GLuint;
-            gl::EnableVertexAttribArray(a_transform);
+            let a_transform_i = a_transform + i as GLuint;
+            gl::EnableVertexAttribArray(a_transform_i);
             gl::VertexAttribPointer(
-                a_transform , 4, gl::FLOAT, gl::FALSE,
-                0, ptr::null::<f32>().offset(4 * i) as *const GLvoid,
+                a_transform_i , 4, gl::FLOAT, gl::FALSE,
+                mem::size_of::<Mat4>() as GLsizei,
+                ptr::null::<f32>().offset(4 * i) as *const GLvoid,
             );
-            gl::VertexAttribDivisor(a_transform, 1);
+            gl::VertexAttribDivisor(a_transform_i, 1);
         }
 
         let a_position   = gl::GetAttribLocation(program, cstr!("a_position")) as GLuint;
@@ -345,7 +357,7 @@ fn main() {
         gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, ebo);
         gl::buffer_data(gl::ELEMENT_ARRAY_BUFFER, &indices, gl::STATIC_DRAW);
 
-        (vao, verts, normals, indices, vbo_transform)
+        (vao, verts, normals, indices, vbo_transforms)
     };
 
     let mut debug            = DebugRender::new();
@@ -359,9 +371,9 @@ fn main() {
     let mut debug_draw_colliders          = false;
     let mut debug_draw_motion_vectors     = false;
     let mut debug_draw_collision_response = false;
-    let mut debug_frame_store             = vec![lemon.phys];
+    let mut debug_frame_store             = vec![lemons[0].phys];
     let mut debug_frame_current           = 0;
-    let mut debug_pause = false;
+    let mut debug_pause                   = false;
 
     let mut camera_fovy: f32 = 30.0_f32.to_radians();
     let mut camera_distance: f32 = 9.0_f32;
@@ -402,7 +414,7 @@ fn main() {
             },
             Event::DeviceEvent { event, .. } => match event {
                 DeviceEvent::Key(KeyboardInput {
-                    state, virtual_keycode: Some(key), ..
+                    state, modifiers, virtual_keycode: Some(key), ..
                 }) => match key {
                     VirtualKeyCode::P => if let ElementState::Pressed = state {
                         capture_image_to_file();
@@ -428,17 +440,18 @@ fn main() {
                     VirtualKeyCode::Left => if let ElementState::Pressed = state {
                         if debug_pause && debug_frame_current > 0 {
                             debug_frame_current -= 1;
-                            lemon.phys = debug_frame_store[debug_frame_current];
+                            current_lemon!().phys = debug_frame_store[debug_frame_current];
                         }
                     },
                     VirtualKeyCode::Right => if let ElementState::Pressed = state {
                         if debug_pause && debug_frame_current + 1 < debug_frame_store.len() {
                             debug_frame_current += 1;
-                            lemon.phys = debug_frame_store[debug_frame_current];
+                            current_lemon!().phys = debug_frame_store[debug_frame_current];
                         }
                     },
                     VirtualKeyCode::Space => if let ElementState::Pressed = state {
-                        reset_lemon(&mut lemon);
+                        if modifiers.ctrl { spawn_lemon(&mut lemons); }
+                        else              { reset_lemon(&mut current_lemon!()); }
                     },
                     _ => (),
                 },
@@ -448,7 +461,7 @@ fn main() {
         });
 
         // UPDATE PHYSICS
-        {
+        for (index, lemon) in lemons.iter_mut().enumerate() {
             if !debug_pause {   // INTEGRATE RIGIDBODIES
                 lemon.phys.position += lemon.phys.velocity;
                 lemon.phys.velocity += PHYS_GRAVITY;
@@ -470,8 +483,6 @@ fn main() {
                     }
                 };
                 lemon.phys.angular_momentum -= angular_drag;
-
-                debug_frame_store.push(lemon.phys);
             }
             if debug_draw_motion_vectors {
                 debug.draw_ray(
@@ -593,17 +604,19 @@ fn main() {
             }
 
             unsafe {
-                gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transform);
-                gl::buffer_data(
+                gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transforms);
+                gl::buffer_sub_data(
                     gl::ARRAY_BUFFER,
+                    index,
                     slice::from_ref(&lemon.phys.get_transform()),
-                    gl::DYNAMIC_DRAW
                 );
             }
         }
+        debug_frame_store.push(current_lemon!().phys);
 
         // UPDATE CAMERA
         if let Some(movement) = mouse_drag.or(Some(vec2!())) {
+            let lemon = current_lemon!();
             camera_azimuth -= (0.5 * movement.x).to_radians();
 
             camera_elevation += (0.5 * movement.y).to_radians();
@@ -642,14 +655,14 @@ fn main() {
             gl::Enable(gl::CULL_FACE);
             gl::Enable(gl::DEPTH_TEST);
             //gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
+            gl::DepthFunc(gl::LESS);
             gl::DrawElementsInstanced(
                 gl::TRIANGLE_STRIP,
                 indices.len() as GLsizei,
                 ELEMENT_INDEX_TYPE,
                 ptr::null(),
-                1,
+                lemons.len() as GLsizei,
             );
-            gl::DepthFunc(gl::LESS);
             debug_depth_test.render_frame();
             gl::DepthFunc(gl::ALWAYS);
             debug.render_frame();
