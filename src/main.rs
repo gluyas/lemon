@@ -111,6 +111,9 @@ macro_rules! color {
 mod gl;
 use crate::gl::types::*;
 
+mod jagged;
+use crate::jagged::Jagged;
+
 mod lemon;
 use crate::lemon::Lemon;
 
@@ -371,7 +374,8 @@ fn main() {
     let mut debug_draw_colliders          = false;
     let mut debug_draw_motion_vectors     = false;
     let mut debug_draw_collision_response = false;
-    let mut debug_frame_store             = vec![lemons[0].phys];
+    let mut debug_frame_store             = Jagged::new();
+    debug_frame_store.push_copy(&lemons);
     let mut debug_frame_current           = 0;
     let mut debug_pause                   = false;
 
@@ -440,13 +444,15 @@ fn main() {
                     VirtualKeyCode::Left => if let ElementState::Pressed = state {
                         if debug_pause && debug_frame_current > 0 {
                             debug_frame_current -= 1;
-                            current_lemon!().phys = debug_frame_store[debug_frame_current];
+                            lemons.clear();
+                            lemons.extend_from_slice(&debug_frame_store[debug_frame_current]);
                         }
                     },
                     VirtualKeyCode::Right => if let ElementState::Pressed = state {
                         if debug_pause && debug_frame_current + 1 < debug_frame_store.len() {
                             debug_frame_current += 1;
-                            current_lemon!().phys = debug_frame_store[debug_frame_current];
+                            lemons.clear();
+                            lemons.extend_from_slice(&debug_frame_store[debug_frame_current]);
                         }
                     },
                     VirtualKeyCode::Space => if let ElementState::Pressed = state {
@@ -612,7 +618,9 @@ fn main() {
                 );
             }
         }
-        debug_frame_store.push(current_lemon!().phys);
+        if !debug_pause {
+            debug_frame_store.push_copy(&lemons);
+        }
 
         // UPDATE CAMERA
         if let Some(movement) = mouse_drag.or(Some(vec2!())) {

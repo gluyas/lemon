@@ -20,7 +20,7 @@ Drag and scroll to manipulate the camera
 | `Space` | Reset current lemon |
 | `Ctrl` + `Space` | Create new lemon |
 | `Esc` | Pause/Unpause simulation |
-| `←` `→` | Step through current lemon frames while paused |
+| `←` `→` | Step through physics frames while paused |
 
 | Toggle | Debug Visualisation |
 | :--------: | ----------------------- |
