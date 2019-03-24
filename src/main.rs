@@ -168,7 +168,13 @@ pub struct Rigidbody {
 
 impl Rigidbody {
     pub fn get_transform(&self) -> Mat4 {
-        Mat4::from_translation(vec3!(self.position)) * Mat4::from(Mat3::from(self.orientation))
+        Mat4::from_translation(vec3!(self.position))
+            * Mat4::from(Mat3::from(self.orientation))
+    }
+
+    pub fn get_transform_inverse(&self) -> Mat4 {
+        Mat4::from(Mat3::from(self.orientation).transpose())
+            * Mat4::from_translation(-vec3!(self.position))
     }
 
     pub fn get_inertia(&self) -> Mat3 {
@@ -266,8 +272,8 @@ fn main() {
     fn reset_lemon(lemon: &mut Lemon) {
         lemon.phys.position         = point3!(0.0, 0.0, 2.0 + 3.0 * rand::random::<f32>());
         lemon.phys.orientation      = Quat::from_axis_angle(
-                                          rand::random::<Vec3>().normalize(),
-                                          Deg(30.0 * (rand::random::<f32>() - 0.5)));
+                                      rand::random::<Vec3>().normalize(),
+                                      Deg(30.0 * (rand::random::<f32>() - 0.5)));
         lemon.phys.velocity         = vec3!();
         lemon.phys.angular_momentum = lemon.phys.get_inertia()
                                     * 0.1 * (rand::random::<Vec3>() - vec3!(0.5, 0.5, 0.5))
@@ -371,13 +377,16 @@ fn main() {
 
         debug.draw_axes(1.5, !0, &Mat4::identity());
     }
-    let mut debug_draw_colliders          = false;
+    let mut debug_draw_colliders_floor    = false;
+    let mut debug_draw_colliders_lemon    = false;
     let mut debug_draw_motion_vectors     = false;
     let mut debug_draw_collision_response = false;
+    let mut debug_ortho_cam: Option<Vec3> = None;
     let mut debug_frame_store             = Jagged::new();
     debug_frame_store.push_copy(&lemons);
     let mut debug_frame_current           = 0;
     let mut debug_pause                   = false;
+    let mut debug_pause_next_frame        = false;
 
     let mut camera_fovy: f32 = 30.0_f32.to_radians();
     let mut camera_distance: f32 = 9.0_f32;
@@ -423,8 +432,11 @@ fn main() {
                     VirtualKeyCode::P => if let ElementState::Pressed = state {
                         capture_image_to_file();
                     },
+                    VirtualKeyCode::Z => if let ElementState::Pressed = state {
+                        debug_draw_colliders_lemon = !debug_draw_colliders_lemon;
+                    },
                     VirtualKeyCode::X => if let ElementState::Pressed = state {
-                        debug_draw_colliders = !debug_draw_colliders;
+                        debug_draw_colliders_floor = !debug_draw_colliders_floor;
                     },
                     VirtualKeyCode::C => if let ElementState::Pressed = state {
                         debug_draw_collision_response = !debug_draw_collision_response;
@@ -433,13 +445,7 @@ fn main() {
                         debug_draw_motion_vectors = !debug_draw_motion_vectors;
                     },
                     VirtualKeyCode::Escape => if let ElementState::Pressed = state {
-                        if debug_pause {
-                            debug_pause = false;
-                            debug_frame_store.truncate(debug_frame_current + 1);
-                        } else {
-                            debug_pause = true;
-                            debug_frame_current = debug_frame_store.len() - 1;
-                        }
+                        debug_pause_next_frame = !debug_pause;
                     },
                     VirtualKeyCode::Left => if let ElementState::Pressed = state {
                         if debug_pause && debug_frame_current > 0 {
@@ -465,6 +471,16 @@ fn main() {
             },
             _ => (),
         });
+
+        // UPDATE PAUSE STATE
+        if debug_pause_next_frame != debug_pause {
+            if debug_pause {
+                debug_frame_store.truncate(debug_frame_current + 1);
+            } else {
+                debug_frame_current = debug_frame_store.len() - 1;
+            }
+            debug_pause = debug_pause_next_frame;
+        }
 
         // UPDATE PHYSICS
         for (index, lemon) in lemons.iter_mut().enumerate() {
@@ -503,7 +519,7 @@ fn main() {
                 );
             }
 
-            // TEST COLLISIONS
+            // TEST PLANE COLLISION
             // find point on torus focal radius furthest from plane
             let displacement = vec3!(0.0, 0.0, lemon.phys.position.z);
             let torus_focus_normal = lemon.phys.orientation * VEC3_Z;
@@ -519,7 +535,7 @@ fn main() {
             let sign = torus_focus_normal.z.signum();
             let base = lemon.phys.position - sign * torus_focus_normal;
             let test_point = if sign * VEC3_Z.cross(base-sphere_centre).dot(sphere_normal)
-                              > 0.0 {
+                           > 0.0 {
                 sphere_closest
             } else {
                 base
@@ -541,9 +557,9 @@ fn main() {
                 let reaction_impulse = {
                     let proj    = -(1.0 + LEMON_COLLISION_ELASTICITY) * velocity.dot(normal);
                     let linear  = 1.0 / lemon.phys.mass;
-                              // + 1.0 / infinity  => 0.0
+                             // + 1.0 / infinity  => 0.0
                     let angular = (inertia_inverse * offset.cross(normal)).cross(offset);
-                              // + [infinity]^-1 => 0.0
+                             // + [infinity]^-1 => 0.0
                     proj / (linear + angular.dot(normal))
                 };
                 let reaction = reaction_impulse * normal;
@@ -583,7 +599,7 @@ fn main() {
 
             debug.draw_axes(0.5, 1, &lemon.phys.get_transform());
 
-            if debug_draw_colliders {
+            if debug_draw_colliders_floor {
                 let position  = lemon.phys.position;
                 let transform = lemon.phys.get_transform();
                 let normal    = (transform * VEC4_Z).truncate();
@@ -618,6 +634,201 @@ fn main() {
                 );
             }
         }
+
+        // TEST LEMON COLLISIONS
+        for index in 0..(lemons.len()) {
+            let (lemon, other_lemons) = {
+                let (heads, tails) = lemons.split_at_mut(index + 1);
+                (&mut heads[index], tails)
+            };
+            let lemon_vertical = lemon.get_vertical();
+            let lemon_focus    = (lemon.phys.position, lemon_vertical, lemon.t);
+            for other in other_lemons.iter_mut() {
+                let other_vertical = other.get_vertical();
+                let other_focus    = (other.phys.position, other_vertical, other.t);
+
+                // iteratively find furthest points on focus radii
+                // based on algorithm described here:
+                // https://www.sciencedirect.com/science/article/pii/S0307904X0200080X
+                // it also cites a result that states the problem has no closed-form solutions
+                let (lemon_sphere, other_sphere, displacement, distance2) = {
+                    const MAX_ITERATIONS: usize = 50;
+                    const EPSILON: f32 = 0.0000;
+
+                    let mut lemon_sphere = furthest_on_circle_from_point(
+                        lemon_focus, other.phys.position,
+                    );
+                    let mut other_sphere = furthest_on_circle_from_point(
+                        other_focus, lemon_sphere,
+                    );
+                    let mut displacement = other_sphere - lemon_sphere;
+                    let mut distance2    = displacement.magnitude2();
+
+                    let mut iterations = 0;
+                    loop {
+                        let distance2_prev = distance2;
+                        iterations  += 1;
+                        lemon_sphere = furthest_on_circle_from_point(lemon_focus, other_sphere);
+                        other_sphere = furthest_on_circle_from_point(other_focus, lemon_sphere);
+                        displacement = other_sphere - lemon_sphere;
+                        distance2    = displacement.magnitude2();
+
+                        let epsilon = distance2 - distance2_prev;
+                        if epsilon <= EPSILON {
+                            break;
+                        }
+                        if iterations >= MAX_ITERATIONS {
+                            // TODO: log error and determine good convergence parameters
+                            break;
+                        }
+                    }
+                    (lemon_sphere, other_sphere, displacement, distance2)
+                };
+                // PERF: already calculated in furthest_on_circle_from_point
+                let lemon_sphere_relative = lemon_sphere - lemon.phys.position;
+                let other_sphere_relative = other_sphere - other.phys.position;
+
+                let lemon_vertical_signed = lemon_vertical
+                                          * lemon_vertical.dot(displacement).signum();
+                let other_vertical_signed = other_vertical
+                                          * other_vertical.dot(displacement).signum().neg();
+
+                // determine point of collision and normal vector
+                let collision: Option<(Point3, Vec3)> = {
+                    fn is_edge_case(
+                        sphere_relative:     Vec3,
+                        vertical_signed:     Vec3,
+                        displacement_signed: Vec3,
+                    ) -> bool {
+                        let upper_bound = vertical_signed - sphere_relative;
+                        let upper_cross = upper_bound.cross(-sphere_relative);
+                        let test_cross  = upper_bound.cross(displacement_signed);
+                        test_cross.dot(upper_cross) < 0.0
+                    }
+
+                    fn do_single_edge_case(
+                        debug: Option<&mut DebugRender>,
+                        lemon: &Lemon, lemon_vertical_signed: Vec3,
+                        other: &Lemon, other_vertical_signed: Vec3,
+                        other_focus: (Point3, Vec3, f32),
+                    ) -> Option<(Point3, Vec3)> {
+                        let lemon_apex = lemon.phys.position + lemon_vertical_signed;
+                        let other_new_sphere = furthest_on_circle_from_point(
+                            other_focus, lemon_apex
+                        );
+                        let new_displacement = other_new_sphere - lemon_apex;
+
+                        if is_edge_case(
+                            other.phys.position - other_new_sphere,
+                            other_vertical_signed,
+                            new_displacement,
+                        ) {
+                            do_double_edge_case(
+                                debug,
+                                lemon, lemon_vertical_signed,
+                                other, other_vertical_signed,
+                            )
+                        } else {
+                            if let Some(debug) = debug {
+                                debug.draw_line(&color!(0x000000FF).truncate(), 1, &[
+                                    lemon_apex, other_new_sphere,
+                                ]);
+                                let arc = make_line_strip_circle(
+                                    &other_new_sphere,
+                                    &other_vertical_signed.cross(new_displacement).normalize(),
+                                    other.r, 63,
+                                );
+                                debug.draw_line(&color!(0x000000FF).truncate(), 1, &arc);
+                            }
+                            if new_displacement.magnitude2() <= other.r * other.r {
+                                let sphere_surface = other_new_sphere
+                                                   - new_displacement.normalize_to(other.r);
+                                Some((
+                                    point3!((vec3!(sphere_surface) + vec3!(lemon_apex)) / 2.0),
+                                    new_displacement.normalize(),
+                                ))
+                            } else { None }
+                        }
+                    }
+
+                    fn do_double_edge_case(
+                        debug: Option<&mut DebugRender>,
+                        lemon: &Lemon, lemon_vertical_signed: Vec3,
+                        other: &Lemon, other_vertical_signed: Vec3,
+                    ) -> Option<(Point3, Vec3)> {
+                        let lemon_apex        = lemon.phys.position + lemon_vertical_signed;
+                        let other_apex        = other.phys.position + other_vertical_signed;
+                        let apex_displacement = other_apex - lemon_apex;
+
+                        if let Some(debug) = debug {
+                            debug.draw_line(&color!(0x000000FF).truncate(), 1, &[
+                                lemon_apex, other_apex,
+                            ]);
+                        }
+                        // TODO: determine if case possible and collision normal behaviour
+                        if lemon_vertical_signed.dot(apex_displacement) < 0.0 {
+                            println!("double-edge case collision");
+                            Some((
+                                point3!((vec3!(lemon_apex) + vec3!(other_apex)) / 2.0),
+                                (lemon_vertical_signed - other_vertical_signed) / 2.0,
+                            ))
+                        } else { None }
+                    }
+
+                    let (lemon_edge, other_edge) = (
+                        is_edge_case(lemon_sphere_relative, lemon_vertical_signed,
+                                     displacement),
+                        is_edge_case(other_sphere_relative, other_vertical_signed,
+                                     displacement.neg()),
+                    );
+                    if lemon_edge && other_edge {
+                        do_double_edge_case(
+                            if debug_draw_colliders_lemon { Some(&mut debug) } else { None },
+                            &lemon, lemon_vertical_signed,
+                            &other, other_vertical_signed,
+                        )
+                    } else if lemon_edge {
+                        do_single_edge_case(
+                            if debug_draw_colliders_lemon { Some(&mut debug) } else { None },
+                            &lemon, lemon_vertical_signed,
+                            &other, other_vertical_signed, other_focus,
+                        )
+                    } else if other_edge {
+                        do_single_edge_case(
+                            if debug_draw_colliders_lemon { Some(&mut debug) } else { None },
+                            &other, other_vertical_signed,
+                            &lemon, lemon_vertical_signed, lemon_focus,
+                        ).map(|(p, n)| (p, n.neg()))
+                    } else {
+                        if debug_draw_colliders_lemon {
+                            let black = color!(0x000000FF).truncate();
+                            debug.draw_line(&black, 1, &[
+                                lemon_sphere, other_sphere,
+                            ]);
+                            debug.draw_line(&black, 1, &make_line_strip_circle(
+                                &other_sphere, &other_vertical.cross(displacement).normalize(),
+                                other.r, 63,
+                            ));
+                            debug.draw_line(&black, 1, &make_line_strip_circle(
+                                &lemon_sphere, &lemon_vertical.cross(displacement).normalize(),
+                                lemon.r, 63,
+                            ));
+                        }
+                        if distance2 <= (lemon.r + other.r).powi(2) {
+                            Some((
+                                lemon_sphere + lemon.r / (lemon.r + other.r) * displacement,
+                                displacement.normalize(),
+                            ))
+                        } else { None }
+                    }
+                };
+
+                if collision.is_some() {
+                    debug_pause_next_frame = true;
+                }
+            }
+        }
+
         if !debug_pause {
             debug_frame_store.push_copy(&lemons);
         }
@@ -678,6 +889,21 @@ fn main() {
         gl_window.swap_buffers().expect("buffer swap failed");
         std::thread::sleep_ms(SLEEP_TIME);
     }
+}
+
+fn furthest_on_circle_from_point(circle: (Point3, Vec3, f32), point: Point3) -> Point3 {
+    let rel  = point - circle.0;
+    let proj = proj_onto_plane(rel, circle.1);
+    circle.0 - proj.normalize_to(circle.2)
+}
+
+fn intersect_ray_plane(ray: (Point3, Vec3), plane: (Vec3, f32)) -> Option<Point3> {
+    intersect_ray_plane_coefficient(ray, plane).map(|t| ray.0 + t * ray.1)
+}
+
+fn intersect_ray_plane_coefficient(ray: (Point3, Vec3), plane: (Vec3, f32)) -> Option<f32> {
+    Some((plane.0 * plane.1 - vec3!(ray.0)).dot(plane.0) / ray.1.dot(plane.0))
+        .filter(|n| !n.is_nan() && *n >= 0.0)
 }
 
 fn proj_onto_plane(v: Vec3, n_normalized: Vec3) -> Vec3 {

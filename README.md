@@ -24,7 +24,8 @@ Drag and scroll to manipulate the camera
 
 | Toggle | Debug Visualisation |
 | :--------: | ----------------------- |
-| `X` | Collision detection constructions |
+| `Z` | Lemon-Lemon collision detection constructions |
+| `X` | Lemon-Floor collision detection constructions |
 | `C` | Collision reaction and friction impulses |
 | `V` | Linear and angular velocity vectors  |
 

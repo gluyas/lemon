@@ -2,8 +2,14 @@ use super::*;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Lemon {
+    /// Radius of the sphere the arc lies on
     pub r: f32,
+
+    /// Sagitta of the arc; radius of the widest horizontal of the lemon
     pub s: f32,
+
+    /// Offset of the sphere from the centre; focal radius
+    /// Equal to `r - s`
     pub t: f32,
 
     pub phys: Rigidbody,
@@ -40,6 +46,10 @@ impl Lemon {
         phys.inertia_local = vec3!(i_y, i_y, i_z);
 
         Lemon { r, s, t, phys }
+    }
+
+    pub fn get_vertical(&self) -> Vec3 {
+        self.phys.orientation * VEC3_Z
     }
 
     pub fn eval_radius_gradient(&self, z: f32) -> (f32, f32) {
