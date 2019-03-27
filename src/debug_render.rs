@@ -165,7 +165,7 @@ impl DebugRender {
                     } else {
                         gl::DeleteBuffers(1, &draw_cmd.vbo);
                         gl::DeleteVertexArrays(1, &draw_cmd.vao);
-                        self.draw_cmds.swap_remove(index);
+                        self.draw_cmds.remove(index);
                     }
                 }
             }

@@ -597,7 +597,7 @@ fn main() {
             let floor_point   = point3!(test_point.x, test_point.y, 0.0);
             let floor_tangent = sphere_normal.cross(VEC3_Z) * lemon.r * 3.0;
 
-            debug.draw_axes(0.5, 1, &lemon.phys.get_transform());
+            //debug.draw_axes(0.5, 1, &lemon.phys.get_transform());
 
             if debug_draw_colliders_floor {
                 let position  = lemon.phys.position;
@@ -707,7 +707,7 @@ fn main() {
                     }
 
                     fn do_single_edge_case(
-                        debug: Option<&mut DebugRender>,
+                        mut debug: Option<&mut DebugRender>,
                         lemon: &Lemon, lemon_vertical_signed: Vec3,
                         other: &Lemon, other_vertical_signed: Vec3,
                         other_focus: (Point3, Vec3, f32),
@@ -716,12 +716,27 @@ fn main() {
                         let other_new_sphere = furthest_on_circle_from_point(
                             other_focus, lemon_apex
                         );
+                        let other_new_sphere_relative = other_new_sphere - other.phys.position;
                         let new_displacement = other_new_sphere - lemon_apex;
 
+                        if let Some(ref mut debug) = debug {
+                            let color = color!(0xFF00FFFF).truncate();
+                            debug.draw_line(&color, 1, &[
+                                other.phys.position + other_vertical_signed, other_new_sphere,
+                                other_new_sphere - other_new_sphere_relative * other.r/other.t,
+                                other_new_sphere, lemon_apex,
+                            ]);
+                            debug.draw_line(&color, 1, &make_line_strip_circle(
+                                &other_new_sphere,
+                                &other_vertical_signed.cross(new_displacement).normalize(),
+                                other.r, 63,
+                            ));
+                        }
+
                         if is_edge_case(
-                            other.phys.position - other_new_sphere,
+                            other_new_sphere - other.phys.position,
                             other_vertical_signed,
-                            new_displacement,
+                            new_displacement.neg(),
                         ) {
                             do_double_edge_case(
                                 debug,
@@ -729,17 +744,6 @@ fn main() {
                                 other, other_vertical_signed,
                             )
                         } else {
-                            if let Some(debug) = debug {
-                                debug.draw_line(&color!(0x000000FF).truncate(), 1, &[
-                                    lemon_apex, other_new_sphere,
-                                ]);
-                                let arc = make_line_strip_circle(
-                                    &other_new_sphere,
-                                    &other_vertical_signed.cross(new_displacement).normalize(),
-                                    other.r, 63,
-                                );
-                                debug.draw_line(&color!(0x000000FF).truncate(), 1, &arc);
-                            }
                             if new_displacement.magnitude2() <= other.r * other.r {
                                 let sphere_surface = other_new_sphere
                                                    - new_displacement.normalize_to(other.r);
@@ -761,7 +765,7 @@ fn main() {
                         let apex_displacement = other_apex - lemon_apex;
 
                         if let Some(debug) = debug {
-                            debug.draw_line(&color!(0x000000FF).truncate(), 1, &[
+                            debug.draw_line(&color!(0x0000FFFF).truncate(), 1, &[
                                 lemon_apex, other_apex,
                             ]);
                         }
@@ -773,6 +777,25 @@ fn main() {
                                 (lemon_vertical_signed - other_vertical_signed) / 2.0,
                             ))
                         } else { None }
+                    }
+
+                    if debug_draw_colliders_lemon {
+                        let color = color!(0xA0A0A0FF).truncate();
+                        debug.draw_line(&color, 1, &[
+                            lemon_sphere - lemon_sphere_relative * lemon.r / lemon.t,
+                            lemon_sphere, lemon.phys.position + lemon_vertical_signed,
+                            lemon_sphere, other_sphere,
+                            other_sphere - other_sphere_relative * other.r / other.t,
+                            other_sphere, other.phys.position + other_vertical_signed,
+                        ]);
+                        debug.draw_line(&color, 1, &make_line_strip_circle(
+                            &other_sphere, &other_vertical.cross(displacement).normalize(),
+                            other.r, 63,
+                        ));
+                        debug.draw_line(&color, 1, &make_line_strip_circle(
+                            &lemon_sphere, &lemon_vertical.cross(displacement).normalize(),
+                            lemon.r, 63,
+                        ));
                     }
 
                     let (lemon_edge, other_edge) = (
@@ -800,20 +823,6 @@ fn main() {
                             &lemon, lemon_vertical_signed, lemon_focus,
                         ).map(|(p, n)| (p, n.neg()))
                     } else {
-                        if debug_draw_colliders_lemon {
-                            let black = color!(0x000000FF).truncate();
-                            debug.draw_line(&black, 1, &[
-                                lemon_sphere, other_sphere,
-                            ]);
-                            debug.draw_line(&black, 1, &make_line_strip_circle(
-                                &other_sphere, &other_vertical.cross(displacement).normalize(),
-                                other.r, 63,
-                            ));
-                            debug.draw_line(&black, 1, &make_line_strip_circle(
-                                &lemon_sphere, &lemon_vertical.cross(displacement).normalize(),
-                                lemon.r, 63,
-                            ));
-                        }
                         if distance2 <= (lemon.r + other.r).powi(2) {
                             Some((
                                 lemon_sphere + lemon.r / (lemon.r + other.r) * displacement,
