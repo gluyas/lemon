@@ -649,28 +649,120 @@ fn main() {
             }
         }
 
+        if !debug_pause {
+            debug_frame_store.push_copy(&lemons);
+        }
+
         // TEST LEMON COLLISIONS
-        for index in 0..(lemons.len()) {
+        for lemon_index in 0..(lemons.len()) {
             let (lemon, other_lemons) = {
-                let (heads, tails) = lemons.split_at_mut(index + 1);
-                (&mut heads[index], tails)
+                let (heads, tails) = lemons.split_at_mut(lemon_index + 1);
+                (&mut heads[lemon_index], tails)
             };
-            for other in other_lemons.iter_mut() {
+            for (other_relative_index, other) in other_lemons.iter_mut().enumerate() {
+                let other_index = lemon_index + other_relative_index + 1;
+
                 let collision = lemon::get_collision_lemon(
                     &lemon, &other,
                     some_if(debug_draw_colliders_lemon, &mut debug),
                 );
+
                 if let Some(collision) = collision {
-                    debug.draw_ray(&color!(0x000000FF).truncate(), 1,
-                        &collision.point,
-                        &(collision.normal * collision.depth / 2.0),
-                    );
+                    assert!(collision.depth >= 0.0, "collision reported negative depth");
+
+                    if !debug_pause { // naively correct interpenetration
+                        lemon.phys.position += collision.normal * collision.depth / 2.0;
+                        other.phys.position -= collision.normal * collision.depth / 2.0;
+                    }
+
+                    let lemon_inertia_inverse = lemon.phys.get_inertia_inverse();
+                    let lemon_point_offset    = collision.point - lemon.phys.position;
+                    let lemon_point_velocity  = ( lemon_inertia_inverse
+                                                * lemon.phys.angular_momentum
+                                                ).cross(lemon_point_offset)
+                                              + lemon.phys.velocity;
+
+                    let other_inertia_inverse = other.phys.get_inertia_inverse();
+                    let other_point_offset    = collision.point - other.phys.position;
+                    let other_point_velocity  = ( other_inertia_inverse
+                                                * other.phys.angular_momentum
+                                                ).cross(other_point_offset)
+                                              + other.phys.velocity;
+
+                    let relative_velocity = lemon_point_velocity - other_point_velocity;
+                    let collision_tangent = proj_onto_plane(relative_velocity, collision.normal)
+                                           .normalize();
+                    let reaction = {
+                        let proj    = -(1.0 + LEMON_COLLISION_ELASTICITY) * collision.normal
+                                     .dot(relative_velocity);
+                        let linear  = 1.0 / lemon.phys.mass
+                                    + 1.0 / other.phys.mass;
+                        let angular = ( lemon_inertia_inverse
+                                      * lemon_point_offset.cross(collision.normal)
+                                      ).cross(lemon_point_offset)
+                                    + ( other_inertia_inverse
+                                      * other_point_offset.cross(collision.normal)
+                                      ).cross(other_point_offset);
+
+                        proj / (linear + angular.dot(collision.normal))
+                    };
+                    let reaction_vector = reaction * collision.normal;
+
+                    let friction = {
+                        let proj    = relative_velocity.dot(collision_tangent);
+                        let linear  = 1.0 / lemon.phys.mass
+                                    + 1.0 / other.phys.mass;
+                        let angular = ( lemon_inertia_inverse
+                                      * lemon_point_offset.cross(collision_tangent)
+                                      ).cross(lemon_point_offset)
+                                    + ( other_inertia_inverse
+                                      * other_point_offset.cross(collision_tangent)
+                                      ).cross(other_point_offset);
+
+                        let cap     = proj / (linear + angular.dot(collision_tangent));
+                        cap.min(reaction * LEMON_FRICTION).neg()
+                    };
+                    let friction_vector = friction * collision_tangent;
+
+                    if debug_draw_collision_response {
+                        debug.draw_ray(&color!(0x0000AFFF).truncate(), 1,
+                            &collision.point,
+                            &(friction_vector / lemon.phys.mass / PHYS_DELTA_TIME)
+                        );
+                        debug.draw_ray(&color!(0xAF0000FF).truncate(), 1,
+                            &collision.point,
+                            &(reaction_vector / lemon.phys.mass / PHYS_DELTA_TIME),
+                        );
+                        debug.draw_ray(&color!(0x00AF00FF).truncate(), 1,
+                            &collision.point,
+                            &(relative_velocity / PHYS_DELTA_TIME),
+                        );
+                    }
+
+                    if !debug_pause {
+                        let impulse = reaction_vector + friction_vector;
+
+                        lemon.phys.velocity         += impulse / lemon.phys.mass;
+                        lemon.phys.angular_momentum += lemon_point_offset.cross(impulse);
+                        other.phys.velocity         -= impulse / other.phys.mass;
+                        other.phys.angular_momentum -= other_point_offset.cross(impulse);
+
+                        unsafe {
+                            gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transforms);
+                            gl::buffer_sub_data(
+                                gl::ARRAY_BUFFER,
+                                lemon_index,
+                                slice::from_ref(&lemon.phys.get_transform()),
+                            );
+                            gl::buffer_sub_data(
+                                gl::ARRAY_BUFFER,
+                                other_index,
+                                slice::from_ref(&other.phys.get_transform()),
+                            );
+                        }
+                    }
                 }
             }
-        }
-
-        if !debug_pause {
-            debug_frame_store.push_copy(&lemons);
         }
 
         // UPDATE CAMERA
