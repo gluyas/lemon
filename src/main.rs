@@ -156,6 +156,21 @@ type ElementIndex = u16;
 const ELEMENT_INDEX_TYPE: GLenum = gl::UNSIGNED_SHORT;
 
 #[derive(Copy, Clone, Debug)]
+pub struct Collision {
+    pub point:  Point3,
+    pub normal: Vec3,
+    pub depth:  f32,
+}
+
+impl Neg for Collision {
+    type Output = Collision;
+    fn neg(mut self) -> Collision {
+        self.normal = self.normal.neg();
+        self
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
 pub struct Rigidbody {
     pub mass:     f32,
     pub position: Point3,
@@ -471,7 +486,6 @@ fn main() {
             },
             _ => (),
         });
-
         // UPDATE PAUSE STATE
         if debug_pause_next_frame != debug_pause {
             if debug_pause {
@@ -597,7 +611,7 @@ fn main() {
             let floor_point   = point3!(test_point.x, test_point.y, 0.0);
             let floor_tangent = sphere_normal.cross(VEC3_Z) * lemon.r * 3.0;
 
-            //debug.draw_axes(0.5, 1, &lemon.phys.get_transform());
+            debug.draw_axes(0.5, 1, &lemon.phys.get_transform());
 
             if debug_draw_colliders_floor {
                 let position  = lemon.phys.position;
@@ -641,199 +655,16 @@ fn main() {
                 let (heads, tails) = lemons.split_at_mut(index + 1);
                 (&mut heads[index], tails)
             };
-            let lemon_vertical = lemon.get_vertical();
-            let lemon_focus    = (lemon.phys.position, lemon_vertical, lemon.t);
             for other in other_lemons.iter_mut() {
-                let other_vertical = other.get_vertical();
-                let other_focus    = (other.phys.position, other_vertical, other.t);
-
-                // iteratively find furthest points on focus radii
-                // based on algorithm described here:
-                // https://www.sciencedirect.com/science/article/pii/S0307904X0200080X
-                // it also cites a result that states the problem has no closed-form solutions
-                let (lemon_sphere, other_sphere, displacement, distance2) = {
-                    const MAX_ITERATIONS: usize = 50;
-                    const EPSILON: f32 = 0.0000;
-
-                    let mut lemon_sphere = furthest_on_circle_from_point(
-                        lemon_focus, other.phys.position,
+                let collision = lemon::get_collision_lemon(
+                    &lemon, &other,
+                    some_if(debug_draw_colliders_lemon, &mut debug),
+                );
+                if let Some(collision) = collision {
+                    debug.draw_ray(&color!(0x000000FF).truncate(), 1,
+                        &collision.point,
+                        &(collision.normal * collision.depth / 2.0),
                     );
-                    let mut other_sphere = furthest_on_circle_from_point(
-                        other_focus, lemon_sphere,
-                    );
-                    let mut displacement = other_sphere - lemon_sphere;
-                    let mut distance2    = displacement.magnitude2();
-
-                    let mut iterations = 0;
-                    loop {
-                        let distance2_prev = distance2;
-                        iterations  += 1;
-                        lemon_sphere = furthest_on_circle_from_point(lemon_focus, other_sphere);
-                        other_sphere = furthest_on_circle_from_point(other_focus, lemon_sphere);
-                        displacement = other_sphere - lemon_sphere;
-                        distance2    = displacement.magnitude2();
-
-                        let epsilon = distance2 - distance2_prev;
-                        if epsilon <= EPSILON {
-                            break;
-                        }
-                        if iterations >= MAX_ITERATIONS {
-                            // TODO: log error and determine good convergence parameters
-                            break;
-                        }
-                    }
-                    (lemon_sphere, other_sphere, displacement, distance2)
-                };
-                // PERF: already calculated in furthest_on_circle_from_point
-                let lemon_sphere_relative = lemon_sphere - lemon.phys.position;
-                let other_sphere_relative = other_sphere - other.phys.position;
-
-                let lemon_vertical_signed = lemon_vertical
-                                          * lemon_vertical.dot(displacement).signum();
-                let other_vertical_signed = other_vertical
-                                          * other_vertical.dot(displacement).signum().neg();
-
-                // determine point of collision and normal vector
-                let collision: Option<(Point3, Vec3)> = {
-                    fn is_edge_case(
-                        sphere_relative:     Vec3,
-                        vertical_signed:     Vec3,
-                        displacement_signed: Vec3,
-                    ) -> bool {
-                        let upper_bound = vertical_signed - sphere_relative;
-                        let upper_cross = upper_bound.cross(-sphere_relative);
-                        let test_cross  = upper_bound.cross(displacement_signed);
-                        test_cross.dot(upper_cross) < 0.0
-                    }
-
-                    fn do_single_edge_case(
-                        mut debug: Option<&mut DebugRender>,
-                        lemon: &Lemon, lemon_vertical_signed: Vec3,
-                        other: &Lemon, other_vertical_signed: Vec3,
-                        other_focus: (Point3, Vec3, f32),
-                    ) -> Option<(Point3, Vec3)> {
-                        let lemon_apex = lemon.phys.position + lemon_vertical_signed;
-                        let other_new_sphere = furthest_on_circle_from_point(
-                            other_focus, lemon_apex
-                        );
-                        let other_new_sphere_relative = other_new_sphere - other.phys.position;
-                        let new_displacement = other_new_sphere - lemon_apex;
-
-                        if let Some(ref mut debug) = debug {
-                            let color = color!(0xFF00FFFF).truncate();
-                            debug.draw_line(&color, 1, &[
-                                other.phys.position + other_vertical_signed, other_new_sphere,
-                                other_new_sphere - other_new_sphere_relative * other.r/other.t,
-                                other_new_sphere, lemon_apex,
-                            ]);
-                            debug.draw_line(&color, 1, &make_line_strip_circle(
-                                &other_new_sphere,
-                                &other_vertical_signed.cross(new_displacement).normalize(),
-                                other.r, 63,
-                            ));
-                        }
-
-                        if is_edge_case(
-                            other_new_sphere - other.phys.position,
-                            other_vertical_signed,
-                            new_displacement.neg(),
-                        ) {
-                            do_double_edge_case(
-                                debug,
-                                lemon, lemon_vertical_signed,
-                                other, other_vertical_signed,
-                            )
-                        } else {
-                            if new_displacement.magnitude2() <= other.r * other.r {
-                                let sphere_surface = other_new_sphere
-                                                   - new_displacement.normalize_to(other.r);
-                                Some((
-                                    point3!((vec3!(sphere_surface) + vec3!(lemon_apex)) / 2.0),
-                                    new_displacement.normalize(),
-                                ))
-                            } else { None }
-                        }
-                    }
-
-                    fn do_double_edge_case(
-                        debug: Option<&mut DebugRender>,
-                        lemon: &Lemon, lemon_vertical_signed: Vec3,
-                        other: &Lemon, other_vertical_signed: Vec3,
-                    ) -> Option<(Point3, Vec3)> {
-                        let lemon_apex        = lemon.phys.position + lemon_vertical_signed;
-                        let other_apex        = other.phys.position + other_vertical_signed;
-                        let apex_displacement = other_apex - lemon_apex;
-
-                        if let Some(debug) = debug {
-                            debug.draw_line(&color!(0x0000FFFF).truncate(), 1, &[
-                                lemon_apex, other_apex,
-                            ]);
-                        }
-                        // TODO: determine if case possible and collision normal behaviour
-                        if lemon_vertical_signed.dot(apex_displacement) < 0.0 {
-                            println!("double-edge case collision");
-                            Some((
-                                point3!((vec3!(lemon_apex) + vec3!(other_apex)) / 2.0),
-                                (lemon_vertical_signed - other_vertical_signed) / 2.0,
-                            ))
-                        } else { None }
-                    }
-
-                    if debug_draw_colliders_lemon {
-                        let color = color!(0xA0A0A0FF).truncate();
-                        debug.draw_line(&color, 1, &[
-                            lemon_sphere - lemon_sphere_relative * lemon.r / lemon.t,
-                            lemon_sphere, lemon.phys.position + lemon_vertical_signed,
-                            lemon_sphere, other_sphere,
-                            other_sphere - other_sphere_relative * other.r / other.t,
-                            other_sphere, other.phys.position + other_vertical_signed,
-                        ]);
-                        debug.draw_line(&color, 1, &make_line_strip_circle(
-                            &other_sphere, &other_vertical.cross(displacement).normalize(),
-                            other.r, 63,
-                        ));
-                        debug.draw_line(&color, 1, &make_line_strip_circle(
-                            &lemon_sphere, &lemon_vertical.cross(displacement).normalize(),
-                            lemon.r, 63,
-                        ));
-                    }
-
-                    let (lemon_edge, other_edge) = (
-                        is_edge_case(lemon_sphere_relative, lemon_vertical_signed,
-                                     displacement),
-                        is_edge_case(other_sphere_relative, other_vertical_signed,
-                                     displacement.neg()),
-                    );
-                    if lemon_edge && other_edge {
-                        do_double_edge_case(
-                            if debug_draw_colliders_lemon { Some(&mut debug) } else { None },
-                            &lemon, lemon_vertical_signed,
-                            &other, other_vertical_signed,
-                        )
-                    } else if lemon_edge {
-                        do_single_edge_case(
-                            if debug_draw_colliders_lemon { Some(&mut debug) } else { None },
-                            &lemon, lemon_vertical_signed,
-                            &other, other_vertical_signed, other_focus,
-                        )
-                    } else if other_edge {
-                        do_single_edge_case(
-                            if debug_draw_colliders_lemon { Some(&mut debug) } else { None },
-                            &other, other_vertical_signed,
-                            &lemon, lemon_vertical_signed, lemon_focus,
-                        ).map(|(p, n)| (p, n.neg()))
-                    } else {
-                        if distance2 <= (lemon.r + other.r).powi(2) {
-                            Some((
-                                lemon_sphere + lemon.r / (lemon.r + other.r) * displacement,
-                                displacement.normalize(),
-                            ))
-                        } else { None }
-                    }
-                };
-
-                if collision.is_some() {
-                    debug_pause_next_frame = true;
                 }
             }
         }
@@ -900,6 +731,18 @@ fn main() {
     }
 }
 
+#[inline]
+fn some_if<T>(predicate: bool, value: T) -> Option<T> {
+    if predicate { Some(value) } else { None }
+}
+
+#[inline]
+fn some_if_then<T, F>(predicate: bool, f: F) -> Option<T>
+where F: FnOnce() -> T
+{
+    if predicate { Some(f()) } else { None }
+}
+
 fn furthest_on_circle_from_point(circle: (Point3, Vec3, f32), point: Point3) -> Point3 {
     let rel  = point - circle.0;
     let proj = proj_onto_plane(rel, circle.1);
@@ -922,7 +765,7 @@ fn proj_onto_plane(v: Vec3, n_normalized: Vec3) -> Vec3 {
 fn make_line_strip_circle(
     centre: &Point3, normal: &Vec3, radius: f32, segments: usize,
 ) -> Vec<Point3> {
-    let other = if normal.y != 0.0 && normal.z != 0.0 { VEC3_X } else { VEC3_Y };
+    let other     = if normal.y != 0.0 || normal.z != 0.0 { VEC3_X } else { VEC3_Y };
     let tangent   = normal.cross(other).normalize_to(radius);
     let bitangent = normal.cross(tangent);
 

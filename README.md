@@ -71,3 +71,4 @@ Drag and scroll to manipulate the camera
 - http://realtimecollisiondetection.net
 - https://www.gameenginebook.com
 - https://gafferongames.com/post/collision_response_and_coulomb_friction
+- https://www.sciencedirect.com/science/article/pii/S0307904X0200080X
