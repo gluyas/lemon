@@ -48,8 +48,18 @@ impl Lemon {
         Lemon { r, s, t, phys }
     }
 
+    #[inline]
     pub fn get_vertical(&self) -> Vec3 {
         self.phys.orientation * VEC3_Z
+    }
+
+    #[inline]
+    pub fn get_bounding_capsule(&self) -> Capsule {
+        let half = (1.0 - self.s) * self.get_vertical();
+        Capsule {
+            line: (self.phys.position - half, self.phys.position + half),
+            radius: self.s,
+        }
     }
 
     pub fn eval_radius_gradient(&self, z: f32) -> (f32, f32) {
@@ -276,7 +286,7 @@ pub fn get_collision_lemon(
             // curved surface to curved surface
             // also handles vertex-vertex collision
             if let Some(ref mut debug) = debug {
-                let color = color!(0xA0A0A0FF).truncate();
+                let color = color!(0x708090FF).truncate();
                 debug.draw_line(&color, 1, &[
                     lemon.phys.position + lemon_vertical, lemon_sphere,
                     lemon.phys.position - lemon_vertical, lemon_sphere,
@@ -284,10 +294,10 @@ pub fn get_collision_lemon(
                     other_sphere, other.phys.position - other_vertical,
                 ]);
                 debug.draw_line(&color, 1, &make_line_strip_circle(
-                    &lemon_sphere, &lemon_vertical.cross(displacement).normalize(), lemon.r, 63,
+                    lemon_sphere, lemon_vertical.cross(displacement).normalize(), lemon.r, 63,
                 ));
                 debug.draw_line(&color, 1, &make_line_strip_circle(
-                    &other_sphere, &other_vertical.cross(displacement).normalize(), other.r, 63,
+                    other_sphere, other_vertical.cross(displacement).normalize(), other.r, 63,
                 ));
             }
 
@@ -350,7 +360,7 @@ pub fn get_collision_lemon(
                     other_vertex,
                 ]);
                 debug.draw_line(&color, 1, &make_line_strip_circle(
-                    &lemon_sphere, &lemon_vertical.cross(displacement).normalize(), lemon.r, 63,
+                    lemon_sphere, lemon_vertical.cross(displacement).normalize(), lemon.r, 63,
                 ));
             }
             if is_edge_case(lemon, lemon_vertical, lemon_sphere, displacement) {
