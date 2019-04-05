@@ -115,12 +115,14 @@ mod jagged;
 use crate::jagged::Jagged;
 
 mod lemon;
-use crate::lemon::Lemon;
+use crate::lemon::{Lemon, NormalizedLemon};
 
 mod debug_render;
 use crate::debug_render::DebugRender;
 
 use glutin::*;
+
+use rand::random;
 
 use cgmath::{*, num_traits::{zero, one}};
 type Vec4   = cgmath::Vector4<f32>;
@@ -259,6 +261,10 @@ const LEMON_COLLISION_ELASTICITY: f32 = 0.15;
 const LEMON_FRICTION:     f32 = 1.55 * NEWTON / NEWTON;
 const LEMON_ANGULAR_DRAG: f32 = 1.0 * NEWTON * METER;
 
+const LEMON_SCALE_MAX:    f32 = 1.25;
+const LEMON_SCALE_MIN:    f32 = 0.75;
+const LEMON_S:            f32 = 0.58;
+
 const WIDTH:  usize = 1280;
 const HEIGHT: usize = 720;
 
@@ -305,19 +311,19 @@ fn main() {
     fn spawn_lemon(lemons: &mut Vec<Lemon>) {
         if lemons.len() >= MAX_BODIES { return; }
 
-        let scale = (0.5*(1.0-rand::random::<f32>().powi(2)) + 0.75) * METER;
-        let mut new_lemon = Lemon::new(0.58, scale);
+        let scale = LEMON_SCALE_MIN + (LEMON_SCALE_MAX-LEMON_SCALE_MIN) * random::<f32>();
+        let mut new_lemon = Lemon::new(LEMON_S, scale);
         reset_lemon(&mut new_lemon);
         lemons.push(new_lemon);
     }
     fn reset_lemon(lemon: &mut Lemon) {
-        lemon.phys.position         = point3!(0.0, 0.0, (2.0+3.0*rand::random::<f32>())*METER);
+        lemon.phys.position         = point3!(0.0, 0.0, (2.0+3.0*random::<f32>())*METER);
         lemon.phys.orientation      = Quat::from_axis_angle(
-                                      rand::random::<Vec3>().normalize(),
-                                      Deg(30.0 * (rand::random::<f32>() - 0.5)));
+                                      random::<Vec3>().normalize(),
+                                      Deg(30.0 * (random::<f32>() - 0.5)));
         lemon.phys.velocity         = vec3!() * METER / SECOND;
         lemon.phys.angular_momentum = lemon.phys.get_inertia()
-                                    * (rand::random::<Vec3>() - vec3!(0.5, 0.5, 0.5)) * 2.0
+                                    * (random::<Vec3>() - vec3!(0.5, 0.5, 0.5)) * 2.0
                                     * TAU / 5.0 / SECOND;
     }
     macro_rules! current_lemon { () => { lemons.last_mut().unwrap() } }
@@ -366,7 +372,7 @@ fn main() {
         let vao = gl::gen_object(gl::GenVertexArrays);
         gl::BindVertexArray(vao);
 
-        let (verts, uvs, normals, indices) = current_lemon!().get_normalized().make_mesh();
+        let (verts, uvs, normals, indices) = NormalizedLemon::new(LEMON_S).make_mesh();
 
         let a_transform    = gl::GetAttribLocation(program, cstr!("a_transform")) as GLuint;
         let vbo_transforms = gl::gen_object(gl::GenBuffers);
@@ -665,7 +671,8 @@ fn main() {
         }
 
         // TEST LEMON COLLISIONS
-        for lemon_index in 0..(lemons.len()) {
+        let lemons_len = lemons.len();
+        for lemon_index in 0..lemons_len {
             let (lemon, other_lemons) = {
                 let (heads, tails) = lemons.split_at_mut(lemon_index + 1);
                 (&mut heads[lemon_index], tails)
@@ -678,7 +685,10 @@ fn main() {
                     &other.get_bounding_capsule(),
                 );
                 let force_collision_test = debug_draw_colliders_lemon
-                                        &&!debug_draw_bounding_volumes;
+                                        &&!debug_draw_bounding_volumes
+                                        && ( lemons_len <= 4
+                                          || ( lemon.phys.position-other.phys.position
+                                             ).magnitude2() <= 9.0 );
                 let collision = {
                     if bounding_volume_overlap || force_collision_test {
                         lemon::get_collision_lemon(

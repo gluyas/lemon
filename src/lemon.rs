@@ -29,7 +29,7 @@ impl Lemon {
             panic!("lemon sagitta greater than 1.0");
         }
 
-        let normalized = NormalizedLemon::from_s(s);
+        let normalized = NormalizedLemon::new(s);
         let (r, _, _)  = normalized.rst();
 
         let (mass, i_z, i_y) = normalized.eval_definite_integral_mass_intertia_z_y_n1_p1();
@@ -111,7 +111,7 @@ pub struct NormalizedLemon {
 }
 
 impl NormalizedLemon {
-    pub fn from_s(s: f32) -> Self {
+    pub fn new(s: f32) -> Self {
         let r = (s*s + 1.0) / 2.0 / s;
         let t = r - s;
         NormalizedLemon { r, s, t }
