@@ -159,8 +159,15 @@ const ELEMENT_INDEX_TYPE: GLenum = gl::UNSIGNED_SHORT;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Collision {
+    /// Point of collision. If overlapping, the midpoint between the two objects.
     pub point:  Point3,
+
+    /// Surface normal of collision. Points towards the first object.
     pub normal: Vec3,
+
+    /// Minimum displacment along `normal` required to separate the objects.
+    /// The objects' surfaces will kiss at `point` when translated by half `depth`
+    /// along `normal` and `-normal` respectively.
     pub depth:  f32,
 }
 
@@ -282,7 +289,7 @@ fn main() {
     fn spawn_lemon(lemons: &mut Vec<Lemon>) {
         if lemons.len() >= PHYS_MAX_BODIES { return; }
 
-        let mut new_lemon = Lemon::new(0.58);
+        let mut new_lemon = Lemon::new(0.58, 0.5*(1.0-rand::random::<f32>().powi(2)) + 0.75);
         reset_lemon(&mut new_lemon);
         lemons.push(new_lemon);
     }
@@ -341,7 +348,7 @@ fn main() {
         let vao = gl::gen_object(gl::GenVertexArrays);
         gl::BindVertexArray(vao);
 
-        let (verts, uvs, normals, indices) = current_lemon!().make_mesh();
+        let (verts, uvs, normals, indices) = current_lemon!().get_normalized().make_mesh();
 
         let a_transform    = gl::GetAttribLocation(program, cstr!("a_transform")) as GLuint;
         let vbo_transforms = gl::gen_object(gl::GenBuffers);
@@ -530,6 +537,7 @@ fn main() {
                 };
                 lemon.phys.angular_momentum -= angular_drag;
             }
+
             if debug_draw_motion_vectors {
                 debug.draw_ray(
                     &color!(0xFF50FFFF).truncate(), 1, &lemon.phys.position,
@@ -543,86 +551,77 @@ fn main() {
                 );
             }
 
-            // TEST PLANE COLLISION
-            // find point on torus focal radius furthest from plane
-            let displacement = vec3!(0.0, 0.0, lemon.phys.position.z);
-            let torus_focus_normal = lemon.phys.orientation * VEC3_Z;
-            // TODO: check focus normal parallel to plane
-            let displacement_proj = proj_onto_plane(displacement, torus_focus_normal);
+            let floor_collision = lemon::get_collision_halfspace(
+                &lemon, (VEC3_Z, 0.0),
+                some_if(debug_draw_colliders_floor, &mut debug),
+            );
 
-            let sphere_centre = lemon.phys.position
-                              + lemon.t * displacement_proj.normalize();
-            let sphere_normal = torus_focus_normal.cross(displacement_proj);
-
-            let sphere_closest = sphere_centre - VEC3_Z*lemon.r;
-
-            let sign = torus_focus_normal.z.signum();
-            let base = lemon.phys.position - sign * torus_focus_normal;
-            let test_point = if sign * VEC3_Z.cross(base-sphere_centre).dot(sphere_normal)
-                           > 0.0 {
-                sphere_closest
-            } else {
-                base
-            };
-
-            if test_point.z <= 0.0 { // COLLISION RESPONSE
+            // COLLISION RESPONSE
+            if let Some(mut collision) = floor_collision {
                 // push object out of plane // TODO: solve for velocity, orientation
-                let new_position     = lemon.phys.position - test_point.z * VEC3_Z;
+                if !debug_pause {
+                    lemon.phys.position += collision.normal * collision.depth;
+                    collision.point     += collision.normal * collision.depth / 2.0;
+                }
 
                 let inertia_inverse  = lemon.phys.get_inertia_inverse();
                 let angular_velocity = inertia_inverse * lemon.phys.angular_momentum;
 
-                let point    = point3!(test_point.x, test_point.y, 0.0);
-                let offset   = point - new_position;
+                let offset   = collision.point - lemon.phys.position;
                 let velocity = lemon.phys.velocity + angular_velocity.cross(offset);
-                let normal   = VEC3_Z;
-                let tangent  = proj_onto_plane(velocity.normalize(), normal);
 
-                let reaction_impulse = {
-                    let proj    = -(1.0 + LEMON_COLLISION_ELASTICITY) * velocity.dot(normal);
+                let collision_tangent = proj_onto_plane(velocity.normalize(), collision.normal);
+
+                let reaction = {
+                    let proj    = -(1.0 + LEMON_COLLISION_ELASTICITY)
+                                * velocity.dot(collision.normal);
                     let linear  = 1.0 / lemon.phys.mass;
                              // + 1.0 / infinity  => 0.0
-                    let angular = (inertia_inverse * offset.cross(normal)).cross(offset);
+                    let angular = ( inertia_inverse
+                                  * offset.cross(collision.normal)
+                                  ).cross(offset);
                              // + [infinity]^-1 => 0.0
-                    proj / (linear + angular.dot(normal))
+                    proj / (linear + angular.dot(collision.normal))
                 };
-                let reaction = reaction_impulse * normal;
+                let reaction_vector = reaction * collision.normal;
 
-                let friction = -tangent * {
-                    let proj    = velocity.dot(tangent);
+                let friction = {
+                    let proj    = velocity.dot(collision_tangent);
                     let linear  = 1.0 / lemon.phys.mass;
-                    let angular = (inertia_inverse * offset.cross(tangent)).cross(offset);
+                    let angular = ( inertia_inverse
+                                  * offset.cross(collision_tangent)
+                                  ).cross(offset);
 
-                    let cap     = proj / (linear + angular.dot(tangent));
-                    cap.min(reaction_impulse * LEMON_FRICTION)
+                    let cap     = proj / (linear + angular.dot(collision_tangent));
+                    cap.min(reaction * LEMON_FRICTION).neg()
                 };
+                let friction_vector = friction * collision_tangent;
 
                 if !debug_pause {
-                    lemon.phys.position          = new_position;
-                    lemon.phys.velocity         += (reaction + friction) / lemon.phys.mass;
-                    lemon.phys.angular_momentum += offset.cross(reaction + friction);
+                    let impulse = reaction_vector + friction_vector;
+
+                    lemon.phys.velocity         += impulse / lemon.phys.mass;
+                    lemon.phys.angular_momentum += offset.cross(impulse);
                 }
+
                 if debug_draw_collision_response {
                     debug.draw_ray(
-                        &color!(0x0000AFFF).truncate(), 1, &point,
-                        &(friction / lemon.phys.mass / PHYS_DELTA_TIME)
+                        &color!(0x0000AFFF).truncate(), 1, &collision.point,
+                        &(friction_vector / lemon.phys.mass / PHYS_DELTA_TIME)
                     );
                     debug.draw_ray(
-                        &color!(0xAF0000FF).truncate(), 1, &point,
-                        &(reaction / lemon.phys.mass / PHYS_DELTA_TIME)
+                        &color!(0xAF0000FF).truncate(), 1, &collision.point,
+                        &(reaction_vector / lemon.phys.mass / PHYS_DELTA_TIME)
                     );
                     debug.draw_ray(
-                        &color!(0x00AF00FF).truncate(), 1, &point, &(velocity / PHYS_DELTA_TIME)
+                        &color!(0x00AF00FF).truncate(), 1, &collision.point,
+                        &(velocity / PHYS_DELTA_TIME)
                     );
                 }
             }
 
-            // DEBUG VISUALISATIONS
-            let floor_point   = point3!(test_point.x, test_point.y, 0.0);
-            let floor_tangent = sphere_normal.cross(VEC3_Z) * lemon.r * 3.0;
-
             if debug_draw_bounding_volumes {
-                debug_depth_test.draw_line(&color!(0x708090FF).truncate(), 1, 
+                debug_depth_test.draw_line(&color!(0x708090FF).truncate(), 1,
                     &make_line_strip_capsule_billboard(
                         &lemon.get_bounding_capsule(), camera.position-lemon.phys.position, 5,
                     )
@@ -632,37 +631,12 @@ fn main() {
                 debug.draw_axes(0.5, 1, &lemon.phys.get_transform());
             }
 
-            if debug_draw_colliders_floor {
-                let position  = lemon.phys.position;
-                let transform = lemon.phys.get_transform();
-                let normal    = (transform * VEC4_Z).truncate();
-
-                let mut focal_radius = make_line_strip_circle(
-                    lemon.phys.position, normal, lemon.t, 31
-                );
-                debug.draw_line(&color!(0x000000FF).truncate(), 1, &focal_radius);
-
-                let sphere_normal = normal.cross(displacement_proj).normalize();
-                let mut sphere_radius = make_line_strip_circle(
-                    sphere_centre, sphere_normal,  lemon.r, 31
-                );
-                debug.draw_line(&color!(0x000000FF).truncate(), 1, &sphere_radius);
-
-                debug.draw_line(&color!(0x000000FF).truncate(), 1, &[
-                    position + normal, sphere_centre, position - normal,
-                    sphere_centre, test_point,
-                ]);
-
-                let world_axes_transform = Mat4::from_translation(vec3!(sphere_centre));
-                debug.draw_axes(0.4, 1, &world_axes_transform);
-            }
-
             unsafe {
                 gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transforms);
                 gl::buffer_sub_data(
                     gl::ARRAY_BUFFER,
                     index,
-                    slice::from_ref(&lemon.phys.get_transform()),
+                    slice::from_ref(&lemon.get_transform_with_scale()),
                 );
             }
         }
@@ -684,10 +658,8 @@ fn main() {
                     &lemon.get_bounding_capsule(),
                     &other.get_bounding_capsule(),
                 );
-                let force_collision_test = debug_draw_colliders_lemon 
-                                        &&!debug_draw_bounding_volumes
-                                        && (other.phys.position - lemon.phys.position)
-                                          .magnitude2() <= 16.0;
+                let force_collision_test = debug_draw_colliders_lemon
+                                        &&!debug_draw_bounding_volumes;
                 let collision = {
                     if bounding_volume_overlap || force_collision_test {
                         lemon::get_collision_lemon(
@@ -785,12 +757,12 @@ fn main() {
                             gl::buffer_sub_data(
                                 gl::ARRAY_BUFFER,
                                 lemon_index,
-                                slice::from_ref(&lemon.phys.get_transform()),
+                                slice::from_ref(&lemon.get_transform_with_scale()),
                             );
                             gl::buffer_sub_data(
                                 gl::ARRAY_BUFFER,
                                 other_index,
-                                slice::from_ref(&other.phys.get_transform()),
+                                slice::from_ref(&other.get_transform_with_scale()),
                             );
                         }
                     }
@@ -868,8 +840,6 @@ where F: FnOnce() -> T
     if predicate { Some(f()) } else { None }
 }
 
-
-
 fn furthest_on_circle_from_point(circle: (Point3, Vec3, f32), point: Point3) -> Point3 {
     let rel  = point - circle.0;
     let proj = proj_onto_plane(rel, circle.1);
@@ -894,7 +864,7 @@ fn overlap_capsules(a: &Capsule, b: &Capsule) -> bool {
 }
 
 fn closest_on_segments(
-    (p1, q1): (Point3, Point3), 
+    (p1, q1): (Point3, Point3),
     (p2, q2): (Point3, Point3),
 ) -> (Point3, Point3) {
     // adapted from Real-Time Collision Detection, Christer Ericson
@@ -954,6 +924,12 @@ fn proj_onto_plane(v: Vec3, n_normalized: Vec3) -> Vec3 {
     v - v.dot(n_normalized) * n_normalized
 }
 
+fn proj_point_onto_plane(point: Point3, plane: (Vec3, f32)) -> Point3 {
+    let plane_origin = point3!() + plane.0 * plane.1;
+    let displacement = point - plane_origin;
+    plane_origin + proj_onto_plane(displacement, plane.0)
+}
+
 fn get_perpendicular(v: Vec3) -> Vec3 {
     if v.y != 0.0 || v.z != 0.0 { v.cross(VEC3_X) } else { v.cross(VEC3_Y) }
 }
@@ -1000,7 +976,7 @@ fn make_line_strip_capsule(
     points.extend(make_arc_points(capsule.line.1, TAU/4.0, -y, z,   quater_segments));
 
     assert_eq!(
-        points.len(), required_capacity, 
+        points.len(), required_capacity,
         "make_line_strip_capsule calculated incorrect capacity"
     );
     points
@@ -1035,7 +1011,7 @@ fn make_line_strip_capsule_billboard(
     points.push(capsule.line.1 + x);
 
     assert_eq!(
-        points.len(), required_capacity, 
+        points.len(), required_capacity,
         "make_line_strip_capsule calculated incorrect capacity"
     );
     points
