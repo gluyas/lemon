@@ -149,6 +149,7 @@ use std::{
     os::raw::c_char,
     ptr,
     slice,
+    time::{Duration, Instant},
     thread,
 };
 
@@ -230,20 +231,35 @@ const BACK_COLOR:  Vec4 = color!(0xA2EFEF_00);
 
 const LEMON_TEX_SIZE: usize = 1;
 
-const SLEEP_TIME: u32 = 30;
-const PHYS_DELTA_TIME: f32 = 1.0 / SLEEP_TIME as f32;
+const FRAME_RATE:       usize    = 60;
+const FRAME_DELTA_TIME: f32      = 1.0 / FRAME_RATE as f32;
+const FRAME_DURATION:   Duration = Duration::from_nanos((1.0e+9 / FRAME_RATE as f64) as u64);
 
-const PHYS_GRAVITY: Vec3 = vec3!(0.0, 0.0, -0.015);
-const PHYS_MAX_BODIES: usize = 32;
+/// Constants for converting from human-readable SI units into per-frame units
+mod si {
+    use super::*;
+
+    pub const METER:    f32 = 1.0;
+    pub const SECOND:   f32 = FRAME_RATE as f32;
+    pub const KILOGRAM: f32 = 1.0;
+
+    pub const NEWTON:   f32 = KILOGRAM * METER / SECOND / SECOND;
+    pub const PASCAL:   f32 = NEWTON / (METER*METER);
+    pub const JOULE:    f32 = NEWTON * METER;
+}
+use crate::si::*;
+
+const MAX_BODIES: usize = 256;
+
+// TODO: 9.81 gravity and scale lemons to a resonable size?
+const PHYS_GRAVITY: Vec3 = vec3!(0.0, 0.0, -23.0 * METER / SECOND / SECOND);
 
 const LEMON_COLLISION_ELASTICITY: f32 = 0.15;
 
-const LEMON_FRICTION: f32 = 1.55;
+const LEMON_FRICTION:     f32 = 1.55 * NEWTON / NEWTON;
+const LEMON_ANGULAR_DRAG: f32 = 1.0 * NEWTON * METER;
 
-const LEMON_ANGULAR_DRAG: f32 = 0.002;
-
-
-const WIDTH: usize = 1280;
+const WIDTH:  usize = 1280;
 const HEIGHT: usize = 720;
 
 fn main() {
@@ -285,22 +301,24 @@ fn main() {
         (camera, camera_ubo, camera_binding_index)
     };
 
-    let mut lemons = Vec::with_capacity(PHYS_MAX_BODIES);
+    let mut lemons = Vec::with_capacity(MAX_BODIES);
     fn spawn_lemon(lemons: &mut Vec<Lemon>) {
-        if lemons.len() >= PHYS_MAX_BODIES { return; }
+        if lemons.len() >= MAX_BODIES { return; }
 
-        let mut new_lemon = Lemon::new(0.58, 0.5*(1.0-rand::random::<f32>().powi(2)) + 0.75);
+        let scale = (0.5*(1.0-rand::random::<f32>().powi(2)) + 0.75) * METER;
+        let mut new_lemon = Lemon::new(0.58, scale);
         reset_lemon(&mut new_lemon);
         lemons.push(new_lemon);
     }
     fn reset_lemon(lemon: &mut Lemon) {
-        lemon.phys.position         = point3!(0.0, 0.0, 2.0 + 3.0 * rand::random::<f32>());
+        lemon.phys.position         = point3!(0.0, 0.0, (2.0+3.0*rand::random::<f32>())*METER);
         lemon.phys.orientation      = Quat::from_axis_angle(
                                       rand::random::<Vec3>().normalize(),
                                       Deg(30.0 * (rand::random::<f32>() - 0.5)));
-        lemon.phys.velocity         = vec3!();
+        lemon.phys.velocity         = vec3!() * METER / SECOND;
         lemon.phys.angular_momentum = lemon.phys.get_inertia()
-                                    * 0.1 * (rand::random::<Vec3>() - vec3!(0.5, 0.5, 0.5))
+                                    * (rand::random::<Vec3>() - vec3!(0.5, 0.5, 0.5)) * 2.0
+                                    * TAU / 5.0 / SECOND;
     }
     macro_rules! current_lemon { () => { lemons.last_mut().unwrap() } }
     spawn_lemon(&mut lemons);
@@ -353,7 +371,7 @@ fn main() {
         let a_transform    = gl::GetAttribLocation(program, cstr!("a_transform")) as GLuint;
         let vbo_transforms = gl::gen_object(gl::GenBuffers);
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transforms);
-        gl::buffer_init::<Mat4>(gl::ARRAY_BUFFER, PHYS_MAX_BODIES, gl::STREAM_DRAW);
+        gl::buffer_init::<Mat4>(gl::ARRAY_BUFFER, MAX_BODIES, gl::STREAM_DRAW);
         for i in 0..4 { // all 4 column vectors
             let a_transform_i = a_transform + i as GLuint;
             gl::EnableVertexAttribArray(a_transform_i);
@@ -425,6 +443,7 @@ fn main() {
 
     let mut exit = false;
     while !exit {
+        let frame_start_time = Instant::now();
         // POLL INPUT
         events_loop.poll_events(|event| match event {
             Event::WindowEvent { event, .. } => match event {
@@ -445,7 +464,7 @@ fn main() {
                 WindowEvent::MouseWheel {
                     delta: MouseScrollDelta::LineDelta(_delta_x, delta_y), ..
                 } => {
-                    camera_distance -= camera_distance * delta_y * PHYS_DELTA_TIME;
+                    camera_distance -= camera_distance * delta_y * 0.065;
                     if camera_distance < 0.0 { camera_distance = 0.0; }
                     mouse_drag = mouse_drag.or(Some(vec2!())); // HACK: redraw on zoom
                 },
@@ -541,13 +560,13 @@ fn main() {
             if debug_draw_motion_vectors {
                 debug.draw_ray(
                     &color!(0xFF50FFFF).truncate(), 1, &lemon.phys.position,
-                    &(lemon.phys.velocity / PHYS_DELTA_TIME),
+                    &(lemon.phys.velocity / FRAME_DELTA_TIME),
                 );
                 debug.draw_ray(
                     &color!(0xFFFF50FF).truncate(), 1, &lemon.phys.position,
                     & ( lemon.phys.get_inertia_inverse()
                       * lemon.phys.angular_momentum
-                      / PHYS_DELTA_TIME ),
+                      / FRAME_DELTA_TIME ),
                 );
             }
 
@@ -607,15 +626,15 @@ fn main() {
                 if debug_draw_collision_response {
                     debug.draw_ray(
                         &color!(0x0000AFFF).truncate(), 1, &collision.point,
-                        &(friction_vector / lemon.phys.mass / PHYS_DELTA_TIME)
+                        &(friction_vector / lemon.phys.mass / FRAME_DELTA_TIME)
                     );
                     debug.draw_ray(
                         &color!(0xAF0000FF).truncate(), 1, &collision.point,
-                        &(reaction_vector / lemon.phys.mass / PHYS_DELTA_TIME)
+                        &(reaction_vector / lemon.phys.mass / FRAME_DELTA_TIME)
                     );
                     debug.draw_ray(
                         &color!(0x00AF00FF).truncate(), 1, &collision.point,
-                        &(velocity / PHYS_DELTA_TIME)
+                        &(velocity / FRAME_DELTA_TIME)
                     );
                 }
             }
@@ -732,15 +751,15 @@ fn main() {
                     if debug_draw_collision_response {
                         debug.draw_ray(&color!(0x0000AFFF).truncate(), 1,
                             &collision.point,
-                            &(friction_vector / lemon.phys.mass / PHYS_DELTA_TIME)
+                            &(friction_vector / lemon.phys.mass / FRAME_DELTA_TIME)
                         );
                         debug.draw_ray(&color!(0xAF0000FF).truncate(), 1,
                             &collision.point,
-                            &(reaction_vector / lemon.phys.mass / PHYS_DELTA_TIME),
+                            &(reaction_vector / lemon.phys.mass / FRAME_DELTA_TIME),
                         );
                         debug.draw_ray(&color!(0x00AF00FF).truncate(), 1,
                             &collision.point,
-                            &(relative_velocity / PHYS_DELTA_TIME),
+                            &(relative_velocity / FRAME_DELTA_TIME),
                         );
                     }
 
@@ -824,7 +843,9 @@ fn main() {
             debug.render_frame();
         }
         gl_window.swap_buffers().expect("buffer swap failed");
-        std::thread::sleep_ms(SLEEP_TIME);
+        if let Some(sleep_duration) = FRAME_DURATION.checked_sub(frame_start_time.elapsed()) {
+            thread::sleep(sleep_duration);
+        }
     }
 }
 

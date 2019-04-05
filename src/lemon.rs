@@ -20,7 +20,7 @@ impl Lemon {
     pub const SUBDIV_T: usize = 32;
     pub const SUBDIV_Z: usize = 32;
 
-    pub const DENSITY: f32 = 10.0;
+    pub const DENSITY: f32 = 10.0 * KILOGRAM / METER / METER / METER;
 
     pub fn new(s: f32, scale: f32) -> Self {
         if s <= 0.0 || scale <= 0.0 {
