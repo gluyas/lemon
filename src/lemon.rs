@@ -17,9 +17,6 @@ pub struct Lemon {
 impl Lemon {
 // https://www.desmos.com/calculator/z7ijifw8pc
 // https://www.researchgate.net/publication/2173504
-    pub const SUBDIV_T: usize = 32;
-    pub const SUBDIV_Z: usize = 32;
-
     pub const DENSITY: f32 = 10.0 * KILOGRAM / METER / METER / METER;
 
     pub fn new(s: f32, scale: f32) -> Self {
@@ -75,33 +72,117 @@ impl Lemon {
             t: self.focal_radius() / self.scale,
         }
     }
+}
 
-    #[deprecated]
-    pub fn make_normal_map(&self) -> Vec<Vec3> {
-        let mut tex = vec![vec3!(0.0, 0.0, 1.0); LEMON_TEX_SIZE * LEMON_TEX_SIZE];
-        /*for i in 0..LEMON_TEX_SIZE {
-            for j in 0..LEMON_TEX_SIZE {
-                tex[j + i * LEMON_TEX_SIZE] = vec3!(
-                    0.2 * (j as f32 * 35.0 * PI / LEMON_TEX_SIZE as f32).sin(),
-                    0.0,
-                    1.0).normalize();
-                //tex[j + i * LEMON_TEX_SIZE] = -vec3!(i as f32 / LEMON_TEX_SIZE as f32, j as f32 / LEMON_TEX_SIZE as f32, 0.0);
-            }
-        }*/
-        /*for (i, pixel) in
-            image::load_from_memory(include_bytes!("../test_normal_map2.png")).unwrap()
-                .flipv()
-                .to_rgb()
-                .pixels()
-                .enumerate()
-        {
-            fn norm(val: u8) -> f32 {
-                2.0 * val as f32 / 255.0 - 1.0
-            }
-            tex[i] = vec3!(norm(pixel[0]), norm(pixel[1]), norm(pixel[2]));
-        }*/
-    tex
+pub const MESH_RESOLUTION_T:      usize = 32;
+pub const MESH_RESOLUTION_Z:      usize = MESH_RESOLUTION_Z_HALF * 2 - 1;
+pub const MESH_RESOLUTION_Z_HALF: usize = 16;
+
+pub struct LemonBaseMesh {
+    /// Vertex base position attribute.
+    pub points:    Vec<Point3>,
+
+    /// Mesh polygon index list.
+    pub indices: Vec<ElementIndex>,
+}
+
+// essentially just a cone-capped cylinder
+pub fn make_base_mesh() -> LemonBaseMesh {
+    // choose vertex points for a uniform arc-length
+    let mut vertex_points = [0.0; MESH_RESOLUTION_Z_HALF];
+    for (i, z) in vertex_points.iter_mut().enumerate() {
+        *z = (i as f32 / (MESH_RESOLUTION_Z_HALF-1) as f32 * TAU/4.0).sin();
     }
+
+    // compute vertices
+    let total_vertices = 2 + (MESH_RESOLUTION_Z - 2) * MESH_RESOLUTION_T;
+    let mut points    = Vec::with_capacity(total_vertices);
+
+    points.push(point3!(0.0, 0.0, -1.0));
+    for i_z in 1..(MESH_RESOLUTION_Z-1) {
+        let (z_index, z_sign) = {
+            if i_z >= MESH_RESOLUTION_Z_HALF {
+                (i_z - (MESH_RESOLUTION_Z_HALF-1),  1.0)
+            } else {
+                ((MESH_RESOLUTION_Z_HALF-1) - i_z, -1.0)
+            }
+        };
+        assert!(z_index <= MESH_RESOLUTION_Z_HALF - 2, "unexpected z_index: {}", z_index);
+
+        for i_theta in 0..MESH_RESOLUTION_T {
+            let theta = i_theta as f32 * TAU / MESH_RESOLUTION_T as f32;
+            points.push(point3!(
+                theta.cos(),
+                theta.sin(),
+                z_sign * vertex_points[z_index]
+            ));
+        }
+    }
+    points.push(point3!(0.0, 0.0, 1.0));
+    assert_eq!(points.len(), total_vertices, "incorrect total_vertices");
+
+    // compute vertex list
+    let total_indices = 3 * MESH_RESOLUTION_T * (2 + 2 * (MESH_RESOLUTION_Z-3));
+    let mut indices = Vec::with_capacity(total_indices);
+    // base cone
+    for i_theta in 0..(MESH_RESOLUTION_T as ElementIndex) {
+        const BASE:   ElementIndex = 1;
+        const VERTEX: ElementIndex = 0;
+
+        indices.push(BASE + i_theta);
+        indices.push(VERTEX);
+        indices.push(BASE + (i_theta+1) % MESH_RESOLUTION_T as ElementIndex);
+    }
+    // main cylinder body
+    for i_z in 0..(MESH_RESOLUTION_Z as ElementIndex - 3) {
+        let i_z_base      = i_z      * MESH_RESOLUTION_T as ElementIndex + 1;
+        let i_z_base_next = i_z_base + MESH_RESOLUTION_T as ElementIndex;
+        for i_theta in 0..MESH_RESOLUTION_T as ElementIndex {
+            let i_theta_next = (i_theta+1) % MESH_RESOLUTION_T as ElementIndex;
+
+            indices.push(i_z_base      + i_theta);
+            indices.push(i_z_base      + i_theta_next);
+            indices.push(i_z_base_next + i_theta);
+
+            indices.push(i_z_base_next + i_theta);
+            indices.push(i_z_base      + i_theta_next);
+            indices.push(i_z_base_next + i_theta_next);
+        }
+    }
+    // base cone
+    for i_theta in 0..(MESH_RESOLUTION_T as ElementIndex) {
+        const BASE:   ElementIndex = ((MESH_RESOLUTION_Z - 3) * MESH_RESOLUTION_T + 1) as _;
+        const VERTEX: ElementIndex = BASE + MESH_RESOLUTION_T as ElementIndex;
+
+        indices.push(BASE + (i_theta+1) % MESH_RESOLUTION_T as ElementIndex);
+        indices.push(VERTEX);
+        indices.push(BASE + i_theta);
+    }
+    assert_eq!(indices.len(), total_indices, "incorrect total_indices");
+
+    LemonBaseMesh { points, indices, }
+}
+
+pub const MAP_RESOLUTION: usize = 512;
+
+pub fn make_radius_normal_z_map() -> Vec<[Vec2; MAP_RESOLUTION]> {
+    let mut tex = Vec::<[Vec2; MAP_RESOLUTION]>::with_capacity(MAP_RESOLUTION);
+    unsafe { tex.set_len(MAP_RESOLUTION); }
+
+    for i_s in 0..MAP_RESOLUTION {
+        let s     = (i_s+1) as f32 / MAP_RESOLUTION as f32;
+        let lemon = NormalizedLemon::new(s);
+
+        for i_z in 0..(MAP_RESOLUTION-1) {
+            // sqrt here to effectively increase sample density as z -> 1.
+            // has a corresponding square in lemon vertex shader.
+            let z = (i_z as f32 / (MAP_RESOLUTION - 1) as f32).sqrt();
+            let (radius, gradient) = lemon.eval_radius_gradient(z);
+            tex[i_s][i_z] = vec2!(radius, -gradient);
+        }
+        tex[i_s][MAP_RESOLUTION-1] = vec2!(0.0, f32::MIN);
+    }
+    tex
 }
 
 pub struct NormalizedLemon {
@@ -175,48 +256,6 @@ impl NormalizedLemon {
                                     + (r2 + t2)/3.0
                                     - 2.0 * t * (r2/8.0*su - u*u*u/4.0) );
         (mass, inertia_z, inertia_y)
-    }
-
-    pub fn make_mesh(&self) -> (Vec<Point3>, Vec<Vec2>, Vec<Vec3>, Vec<ElementIndex>) {
-        let mut zs = [0.0; Lemon::SUBDIV_Z];
-        zs.iter_mut().zip(0..Lemon::SUBDIV_Z)
-            .for_each(|(z, i)| {
-                let z_inverse = 1.0 - (2*i) as f32 / (Lemon::SUBDIV_Z-1) as f32;
-                *z = (PI * z_inverse / 2.0).sin();
-            });
-
-        let mut surface = [(0.0, 0.0); Lemon::SUBDIV_Z];
-        surface.iter_mut().zip(zs.iter())
-            .for_each(|(r_m, &z)| *r_m = self.eval_radius_gradient(z));
-
-        let mut verts   = Vec::with_capacity(Lemon::SUBDIV_T * Lemon::SUBDIV_Z);
-        let mut uvs     = Vec::with_capacity(verts.capacity());
-        let mut normals = Vec::with_capacity(verts.capacity());
-        let mut indices = Vec::with_capacity(Lemon::SUBDIV_T * (2 * Lemon::SUBDIV_Z + 4));
-
-        for i_theta in 0..Lemon::SUBDIV_T {
-            let q_theta = i_theta as f32 / (Lemon::SUBDIV_T-1) as f32;
-            let i_theta_next = (i_theta + 1) % Lemon::SUBDIV_T;
-            let theta = q_theta * 2.0 * PI;
-            let unit = vec3!(theta.sin(), theta.cos(), 0.0);
-
-            indices.push((Lemon::SUBDIV_Z * i_theta) as ElementIndex);
-            indices.push((Lemon::SUBDIV_Z * i_theta) as ElementIndex);
-            for i_z in 0..Lemon::SUBDIV_Z {
-                let q_z = (Lemon::SUBDIV_Z-i_z-1) as f32 / (Lemon::SUBDIV_Z-1) as f32;
-                let (radius, gradient) = surface[i_z];
-
-                verts.push(point3!(0.0, 0.0, zs[i_z]) + radius * unit);
-                uvs.push(vec2!(q_theta, q_z));
-                normals.push(vec3!(unit.x, unit.y, -gradient).normalize());
-
-                indices.push((1 + i_z + Lemon::SUBDIV_Z * i_theta)      as ElementIndex);
-                indices.push((1 + i_z + Lemon::SUBDIV_Z * i_theta_next) as ElementIndex);
-            }
-            indices.push((2 * Lemon::SUBDIV_Z * i_theta_next) as ElementIndex);
-            indices.push((2 * Lemon::SUBDIV_Z * i_theta_next) as ElementIndex);
-        }
-        (verts, uvs, normals, indices)
     }
 }
 
@@ -386,7 +425,7 @@ pub fn get_collision_lemon(
                     break;
                 }
                 if iterations >= MAX_ITERATIONS {
-                    eprintln!("lemon-lemon collision test failed to converge");
+                    // indicate error to better profile this edge case
                     break;
                 }
             }

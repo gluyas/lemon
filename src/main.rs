@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate lazy_static;
 extern crate glutin;
 extern crate cgmath;
 extern crate png;
@@ -145,7 +147,7 @@ type Quat   = cgmath::Quaternion<f32>;
 
 use std::{
     default::Default,
-    f32::consts::PI,
+    f32::{self, consts::PI},
     mem,
     ops::*,
     os::raw::c_char,
@@ -263,7 +265,8 @@ const LEMON_ANGULAR_DRAG: f32 = 1.0 * NEWTON * METER;
 
 const LEMON_SCALE_MAX:    f32 = 1.25;
 const LEMON_SCALE_MIN:    f32 = 0.75;
-const LEMON_S:            f32 = 0.58;
+const LEMON_S_MIN:        f32 = 0.50;
+const LEMON_S_MAX:        f32 = 0.75;
 
 const WIDTH:  usize = 1280;
 const HEIGHT: usize = 720;
@@ -275,7 +278,7 @@ fn main() {
         .with_dimensions(dpi::LogicalSize::new(WIDTH as _, HEIGHT as _))
         .with_resizable(false);
     let context = ContextBuilder::new()
-        .with_multisampling(1);
+        .with_multisampling(2);
     let gl_window = GlWindow::new(window, context, &events_loop).unwrap();
 
     unsafe { gl_window.make_current().unwrap(); }
@@ -307,29 +310,7 @@ fn main() {
         (camera, camera_ubo, camera_binding_index)
     };
 
-    let mut lemons = Vec::with_capacity(MAX_BODIES);
-    fn spawn_lemon(lemons: &mut Vec<Lemon>) {
-        if lemons.len() >= MAX_BODIES { return; }
-
-        let scale = LEMON_SCALE_MIN + (LEMON_SCALE_MAX-LEMON_SCALE_MIN) * random::<f32>();
-        let mut new_lemon = Lemon::new(LEMON_S, scale);
-        reset_lemon(&mut new_lemon);
-        lemons.push(new_lemon);
-    }
-    fn reset_lemon(lemon: &mut Lemon) {
-        lemon.phys.position         = point3!(0.0, 0.0, (2.0+3.0*random::<f32>())*METER);
-        lemon.phys.orientation      = Quat::from_axis_angle(
-                                      random::<Vec3>().normalize(),
-                                      Deg(30.0 * (random::<f32>() - 0.5)));
-        lemon.phys.velocity         = vec3!() * METER / SECOND;
-        lemon.phys.angular_momentum = lemon.phys.get_inertia()
-                                    * (random::<Vec3>() - vec3!(0.5, 0.5, 0.5)) * 2.0
-                                    * TAU / 5.0 / SECOND;
-    }
-    macro_rules! current_lemon { () => { lemons.last_mut().unwrap() } }
-    spawn_lemon(&mut lemons);
-
-    let (vao, verts, normals, indices, vbo_transforms) = unsafe {
+    let (vao, base_mesh, vbo_transform, vbo_lemon_s) = unsafe {
         let program = gl::link_shaders(&[
             gl::compile_shader(include_str!("shader/lemon.vert.glsl"), gl::VERTEX_SHADER),
             gl::compile_shader(include_str!("shader/lemon.frag.glsl"), gl::FRAGMENT_SHADER),
@@ -344,12 +325,9 @@ fn main() {
 
         let u_ambient_color = gl::GetUniformLocation(program, cstr!("u_ambient_color"));
         gl::Uniform4fv(u_ambient_color, 1, as_ptr(&BACK_COLOR));
-
-        //let u_point_light = gl::GetUniformLocation(program, cstr!("u_point_light"));
-        //gl::Uniform4fv(u_point_light, 1, as_ptr(&vec3!(2.0, 2.0, 2.0)));
-
+/*
         let txo_normal_map = gl::gen_object(gl::GenTextures);
-        let normal_map = current_lemon!().make_normal_map();
+        let normal_map = vec![vec3!(); 1024];
         gl::ActiveTexture(gl::TEXTURE0);
         gl::BindTexture(gl::TEXTURE_2D, txo_normal_map);
 
@@ -368,15 +346,35 @@ fn main() {
         gl::GenerateMipmap(gl::TEXTURE_2D);
         let u_normal_map = gl::GetUniformLocation(program, cstr!("u_normal_map"));
         gl::Uniform1i(u_normal_map, 0);
+*/
+        let txo_radius_normal_z_atlas = gl::gen_object(gl::GenTextures);
+        gl::ActiveTexture(gl::TEXTURE0);
+        gl::BindTexture(gl::TEXTURE_2D, txo_radius_normal_z_atlas);
+
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as _);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as _);
+
+        let radius_normal_z_map = lemon::make_radius_normal_z_map();
+        gl::TexImage2D(
+            gl::TEXTURE_2D, 0,
+            gl::RG as _, lemon::MAP_RESOLUTION as _, lemon::MAP_RESOLUTION as _, 0,
+            gl::RG, gl::FLOAT, radius_normal_z_map.as_ptr() as *const GLvoid,
+        );
+        gl::GenerateMipmap(gl::TEXTURE_2D);
+        let u_radius_normal_z_map = gl::GetUniformLocation(program, 
+            cstr!("u_radius_normal_z_map")
+        );
+        gl::Uniform1i(u_radius_normal_z_map, 0);
 
         let vao = gl::gen_object(gl::GenVertexArrays);
         gl::BindVertexArray(vao);
 
-        let (verts, uvs, normals, indices) = NormalizedLemon::new(LEMON_S).make_mesh();
+        let base_mesh = lemon::make_base_mesh();
 
+        // PER-INSTANCE ATTRIBUTES
         let a_transform    = gl::GetAttribLocation(program, cstr!("a_transform")) as GLuint;
-        let vbo_transforms = gl::gen_object(gl::GenBuffers);
-        gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transforms);
+        let vbo_transform = gl::gen_object(gl::GenBuffers);
+        gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transform);
         gl::buffer_init::<Mat4>(gl::ARRAY_BUFFER, MAX_BODIES, gl::STREAM_DRAW);
         for i in 0..4 { // all 4 column vectors
             let a_transform_i = a_transform + i as GLuint;
@@ -389,33 +387,60 @@ fn main() {
             gl::VertexAttribDivisor(a_transform_i, 1);
         }
 
+        let a_lemon_s   = gl::GetAttribLocation(program, cstr!("a_lemon_s")) as GLuint;
+        let vbo_lemon_s = gl::gen_object(gl::GenBuffers);
+        gl::BindBuffer(gl::ARRAY_BUFFER, vbo_lemon_s);
+        gl::buffer_init::<f32>(gl::ARRAY_BUFFER, MAX_BODIES, gl::DYNAMIC_DRAW);
+        gl::EnableVertexAttribArray(a_lemon_s);
+        gl::VertexAttribPointer(a_lemon_s, 1, gl::FLOAT, gl::FALSE, 0, 0 as *const GLvoid);
+        gl::VertexAttribDivisor(a_lemon_s, 1);
+
+        // PER-VERTEX ATTRIBUTES
         let a_position   = gl::GetAttribLocation(program, cstr!("a_position")) as GLuint;
         let vbo_position = gl::gen_object(gl::GenBuffers);
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo_position);
-        gl::buffer_data(gl::ARRAY_BUFFER, &verts, gl::STATIC_DRAW);
+        gl::buffer_data(gl::ARRAY_BUFFER, &base_mesh.points, gl::STATIC_DRAW);
         gl::EnableVertexAttribArray(a_position);
         gl::VertexAttribPointer(a_position, 3, gl::FLOAT, gl::FALSE, 0, 0 as *const GLvoid);
 
-        let a_normal   = gl::GetAttribLocation(program, cstr!("a_normal")) as GLuint;
-        let vbo_normal = gl::gen_object(gl::GenBuffers);
-        gl::BindBuffer(gl::ARRAY_BUFFER, vbo_normal);
-        gl::buffer_data(gl::ARRAY_BUFFER, &normals, gl::STATIC_DRAW);
-        gl::EnableVertexAttribArray(a_normal);
-        gl::VertexAttribPointer(a_normal, 3, gl::FLOAT, gl::FALSE, 0, 0 as *const GLvoid);
-
-        let a_uv   = gl::GetAttribLocation(program, cstr!("a_uv")) as GLuint;
-        let vbo_uv = gl::gen_object(gl::GenBuffers);
-        gl::BindBuffer(gl::ARRAY_BUFFER, vbo_uv);
-        gl::buffer_data(gl::ARRAY_BUFFER, &uvs, gl::STATIC_DRAW);
-        gl::EnableVertexAttribArray(a_uv);
-        gl::VertexAttribPointer(a_uv, 2, gl::FLOAT, gl::FALSE, 0, 0 as *const GLvoid);
-
         let ebo = gl::gen_object(gl::GenBuffers);
         gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, ebo);
-        gl::buffer_data(gl::ELEMENT_ARRAY_BUFFER, &indices, gl::STATIC_DRAW);
+        gl::buffer_data(gl::ELEMENT_ARRAY_BUFFER, &base_mesh.indices, gl::STATIC_DRAW);
 
-        (vao, verts, normals, indices, vbo_transforms)
+        (vao, base_mesh, vbo_transform, vbo_lemon_s)
     };
+
+    let mut lemons = Vec::with_capacity(MAX_BODIES);
+    fn spawn_lemon(lemons: &mut Vec<Lemon>, vbo_lemon_s: GLuint) {
+        if lemons.len() >= MAX_BODIES { return; }
+
+        let scale = LEMON_SCALE_MIN + (LEMON_SCALE_MAX-LEMON_SCALE_MIN) * random::<f32>();
+        let s     = LEMON_S_MIN + (LEMON_S_MAX-LEMON_S_MIN) * random::<f32>();
+        let mut new_lemon = Lemon::new(s, scale);
+        unsafe {
+            gl::BindBuffer(gl::ARRAY_BUFFER, vbo_lemon_s);
+            gl::buffer_sub_data(
+                gl::ARRAY_BUFFER,
+                lemons.len(),
+                slice::from_ref(&s),
+            );
+        }
+
+        reset_lemon(&mut new_lemon);
+        lemons.push(new_lemon);
+    }
+    fn reset_lemon(lemon: &mut Lemon) {
+        lemon.phys.position         = point3!(0.0, 0.0, (2.0+3.0*random::<f32>())*METER);
+        lemon.phys.orientation      = Quat::from_axis_angle(
+                                      random::<Vec3>().normalize(),
+                                      Deg(30.0 * (random::<f32>() - 0.5)));
+        lemon.phys.velocity         = vec3!() * METER / SECOND;
+        lemon.phys.angular_momentum = lemon.phys.get_inertia()
+                                    * (random::<Vec3>() - vec3!(0.5, 0.5, 0.5)) * 2.0
+                                    * TAU / 5.0 / SECOND;
+    }
+    macro_rules! current_lemon { () => { lemons.last_mut().unwrap() } }
+    spawn_lemon(&mut lemons, vbo_lemon_s);
 
     let mut debug            = DebugRender::new();
     let mut debug_depth_test = DebugRender::with_shared_context(&debug);
@@ -519,7 +544,7 @@ fn main() {
                         }
                     },
                     VirtualKeyCode::Space => if let ElementState::Pressed = state {
-                        if modifiers.ctrl { spawn_lemon(&mut lemons); }
+                        if modifiers.ctrl { spawn_lemon(&mut lemons, vbo_lemon_s); }
                         else              { reset_lemon(&mut current_lemon!()); }
                     },
                     _ => (),
@@ -657,7 +682,7 @@ fn main() {
             }
 
             unsafe {
-                gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transforms);
+                gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transform);
                 gl::buffer_sub_data(
                     gl::ARRAY_BUFFER,
                     index,
@@ -782,7 +807,7 @@ fn main() {
                         other.phys.angular_momentum -= other_point_offset.cross(impulse);
 
                         unsafe {
-                            gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transforms);
+                            gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transform);
                             gl::buffer_sub_data(
                                 gl::ARRAY_BUFFER,
                                 lemon_index,
@@ -842,8 +867,8 @@ fn main() {
             //gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
             gl::DepthFunc(gl::LESS);
             gl::DrawElementsInstanced(
-                gl::TRIANGLE_STRIP,
-                indices.len() as GLsizei,
+                gl::TRIANGLES,
+                base_mesh.indices.len() as GLsizei,
                 ELEMENT_INDEX_TYPE,
                 ptr::null(),
                 lemons.len() as GLsizei,
@@ -857,18 +882,6 @@ fn main() {
             thread::sleep(sleep_duration);
         }
     }
-}
-
-#[inline]
-fn some_if<T>(predicate: bool, value: T) -> Option<T> {
-    if predicate { Some(value) } else { None }
-}
-
-#[inline]
-fn some_if_then<T, F>(predicate: bool, f: F) -> Option<T>
-where F: FnOnce() -> T
-{
-    if predicate { Some(f()) } else { None }
 }
 
 fn furthest_on_circle_from_point(circle: (Point3, Vec3, f32), point: Point3) -> Point3 {
@@ -1119,6 +1132,18 @@ fn capture_image_to_file() -> thread::JoinHandle<()> {
         };
         writer.write_image_data(pixels.as_slice()).expect("failed to write png data");
     })
+}
+
+#[inline]
+fn some_if<T>(predicate: bool, value: T) -> Option<T> {
+    if predicate { Some(value) } else { None }
+}
+
+#[inline]
+fn some_if_then<T, F>(predicate: bool, f: F) -> Option<T>
+where F: FnOnce() -> T
+{
+    if predicate { Some(f()) } else { None }
 }
 
 fn as_ptr<R, P>(reference: &R) -> *const P {
