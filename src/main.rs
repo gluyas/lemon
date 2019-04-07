@@ -267,6 +267,8 @@ const LEMON_SCALE_MAX:    f32 = 1.25;
 const LEMON_SCALE_MIN:    f32 = 0.75;
 const LEMON_S_MIN:        f32 = 0.50;
 const LEMON_S_MAX:        f32 = 0.75;
+const LEMON_PARTY_S_MIN:  f32 = 0.30;
+const LEMON_PARTY_S_MAX:  f32 = 0.95;
 
 const WIDTH:  usize = 1280;
 const HEIGHT: usize = 720;
@@ -361,7 +363,7 @@ fn main() {
             gl::RG, gl::FLOAT, radius_normal_z_map.as_ptr() as *const GLvoid,
         );
         gl::GenerateMipmap(gl::TEXTURE_2D);
-        let u_radius_normal_z_map = gl::GetUniformLocation(program, 
+        let u_radius_normal_z_map = gl::GetUniformLocation(program,
             cstr!("u_radius_normal_z_map")
         );
         gl::Uniform1i(u_radius_normal_z_map, 0);
@@ -439,7 +441,8 @@ fn main() {
                                     * (random::<Vec3>() - vec3!(0.5, 0.5, 0.5)) * 2.0
                                     * TAU / 5.0 / SECOND;
     }
-    macro_rules! current_lemon { () => { lemons.last_mut().unwrap() } }
+    macro_rules! current_lemon       { () => { lemons.last_mut().unwrap() } }
+    macro_rules! current_lemon_index { () => { lemons.len() - 1 } }
     spawn_lemon(&mut lemons, vbo_lemon_s);
 
     let mut debug            = DebugRender::new();
@@ -451,15 +454,23 @@ fn main() {
         debug.draw_axes(1.5, !0, &Mat4::identity());
     }
     let mut debug_draw_axes               = false;
+    let mut debug_draw_torus_section      = false;
     let mut debug_draw_colliders_floor    = false;
     let mut debug_draw_colliders_lemon    = false;
     let mut debug_draw_bounding_volumes   = false;
     let mut debug_draw_motion_vectors     = false;
     let mut debug_draw_collision_response = false;
-    let mut debug_ortho_cam: Option<Vec3> = None;
+    let mut debug_lemon_party             = false;
+
     let mut debug_frame_store             = Jagged::new();
-    debug_frame_store.push_copy(&lemons);
     let mut debug_frame_current           = 0;
+    macro_rules! debug_frame_store_reset { () => {
+        debug_frame_store.clear();
+        debug_frame_current = 0;
+        debug_frame_store.push_copy(&lemons);
+    }; }
+    debug_frame_store.push_copy(&lemons);
+
     let mut debug_pause                   = false;
     let mut debug_pause_next_frame        = false;
 
@@ -493,11 +504,36 @@ fn main() {
                     mouse_pos = mouse_new_pos;
                 },
                 WindowEvent::MouseWheel {
-                    delta: MouseScrollDelta::LineDelta(_delta_x, delta_y), ..
+                    delta: MouseScrollDelta::LineDelta(_delta_x, delta_y), modifiers, ..
                 } => {
-                    camera_distance -= camera_distance * delta_y * 0.065;
-                    if camera_distance < 0.0 { camera_distance = 0.0; }
-                    mouse_drag = mouse_drag.or(Some(vec2!())); // HACK: redraw on zoom
+                    let new_scale = option_if_then(modifiers.ctrl, || {
+                        let new_scale = current_lemon!().scale + delta_y * 0.05;
+                        some_if(new_scale >= 0.35 && new_scale <= 2.0, new_scale)
+                    });
+                    let new_s     = option_if_then(modifiers.alt, || {
+                        let normalized = current_lemon!().get_normalized();
+                        let new_s      = normalized.s + delta_y * 0.01;
+                        if new_s >= 0.15 && new_s <= 0.95 {
+                            unsafe {
+                                gl::BindBuffer(gl::ARRAY_BUFFER, vbo_lemon_s);
+                                gl::buffer_sub_data(gl::ARRAY_BUFFER,
+                                    current_lemon_index!(), slice::from_ref(&normalized.s)
+                                );
+                            }
+                            debug_frame_store_reset!();
+                            Some(new_s)
+                        } else { None }
+                    });
+                    if new_scale.is_some() || new_s.is_some() {
+                        let mut lemon = current_lemon!();
+                        let new_scale = new_scale.unwrap_or(lemon.scale);
+                        let new_s     = new_s.unwrap_or_else(|| lemon.get_normalized().s);
+                        lemon.mutate_shape(new_s, new_scale);
+                    } else if !(modifiers.ctrl || modifiers.alt) { // regular camera zoom
+                        camera_distance -= camera_distance * delta_y * 0.065;
+                        if camera_distance < 0.0 { camera_distance = 0.0; }
+                        mouse_drag = mouse_drag.or(Some(vec2!())); // HACK: redraw on zoom
+                    }
                 },
                 _ => (),
             },
@@ -510,6 +546,9 @@ fn main() {
                     },
                     VirtualKeyCode::A => if let ElementState::Pressed = state {
                         debug_draw_axes = !debug_draw_axes;
+                    },
+                    VirtualKeyCode::S => if let ElementState::Pressed = state {
+                        debug_draw_torus_section = !debug_draw_torus_section;
                     },
                     VirtualKeyCode::Z => if let ElementState::Pressed = state {
                         debug_draw_colliders_lemon = !debug_draw_colliders_lemon;
@@ -525,6 +564,9 @@ fn main() {
                     },
                     VirtualKeyCode::B => if let ElementState::Pressed = state {
                         debug_draw_bounding_volumes = !debug_draw_bounding_volumes;
+                    },
+                    VirtualKeyCode::L => if let ElementState::Pressed = state {
+                        debug_lemon_party = !debug_lemon_party;
                     },
                     VirtualKeyCode::Escape => if let ElementState::Pressed = state {
                         debug_pause_next_frame = !debug_pause;
@@ -565,6 +607,37 @@ fn main() {
 
         // UPDATE PHYSICS
         for (index, lemon) in lemons.iter_mut().enumerate() {
+            if debug_lemon_party && !debug_pause { // this is hacky as shit but important!
+                use mem::transmute as tm;
+
+                const LSB_MASK:   u32 = 0x1;
+                const PARTY_RATE: f32 = 0.5 / SECOND;
+
+                let lsb = unsafe { tm::<_,u32>(lemon.sagitta) & LSB_MASK > 0 };
+                let mut normalized = lemon.get_normalized();
+                normalized = if lsb {
+                    NormalizedLemon::new(normalized.s + PARTY_RATE * lemon.scale)
+                } else {
+                    NormalizedLemon::new(normalized.s - PARTY_RATE * lemon.scale)
+                };
+                let next_lsb = {
+                    if      normalized.s >= LEMON_PARTY_S_MAX { false }
+                    else if normalized.s <= LEMON_PARTY_S_MIN { true  }
+                    else                                      { lsb   }
+                };
+                lemon.mutate_shape(normalized.s, lemon.scale);
+                lemon.sagitta = unsafe { // set the LSB for next frame
+                    if next_lsb { tm::<_,f32>(tm::<_,u32>(lemon.sagitta) | LSB_MASK) }
+                    else        { tm::<_,f32>(tm::<_,u32>(lemon.sagitta) &!LSB_MASK) }
+                };
+                unsafe {
+                    gl::BindBuffer(gl::ARRAY_BUFFER, vbo_lemon_s);
+                    gl::buffer_sub_data(gl::ARRAY_BUFFER,
+                        index, slice::from_ref(&normalized.s)
+                    );
+                }
+            }
+
             if !debug_pause {   // INTEGRATE RIGIDBODIES
                 lemon.phys.position += lemon.phys.velocity;
                 lemon.phys.velocity += PHYS_GRAVITY;
@@ -680,6 +753,26 @@ fn main() {
             if debug_draw_axes {
                 debug.draw_axes(0.5, 1, &lemon.phys.get_transform());
             }
+            if debug_draw_torus_section {
+                let color = color!(0x708090FF).truncate();
+
+                let lemon_vertical = lemon.get_vertical();
+                let to_camera = camera.position - lemon.phys.position;
+                let cross     = to_camera.cross(lemon_vertical);
+                if cross != vec3!(0.0, 0.0, 0.0) {
+                    let radius = cross.normalize_to(lemon.focal_radius());
+                    let normal = lemon_vertical.cross(radius).normalize();
+                    debug.draw_line(&color, 1, &make_line_strip_circle(
+                        lemon.phys.position + radius, normal, lemon.radius, 31,
+                    ));
+                    debug.draw_line(&color, 1, &make_line_strip_circle(
+                        lemon.phys.position - radius, normal, lemon.radius, 31,
+                    ));
+                }
+                debug.draw_line(&color, 1, &make_line_strip_circle(
+                    lemon.phys.position, lemon_vertical, lemon.focal_radius(), 31,
+                ));
+            }
 
             unsafe {
                 gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transform);
@@ -691,7 +784,9 @@ fn main() {
             }
         }
 
-        if !debug_pause {
+        if debug_lemon_party {
+            debug_frame_store_reset!();
+        } else if !debug_pause {
             debug_frame_store.push_copy(&lemons);
         }
 
@@ -1144,6 +1239,18 @@ fn some_if_then<T, F>(predicate: bool, f: F) -> Option<T>
 where F: FnOnce() -> T
 {
     if predicate { Some(f()) } else { None }
+}
+
+#[inline]
+fn option_if<T>(predicate: bool, value: Option<T>) -> Option<T> {
+    if predicate { value } else { None }
+}
+
+#[inline]
+fn option_if_then<T, F>(predicate: bool, f: F) -> Option<T>
+where F: FnOnce() -> Option<T>
+{
+    if predicate { f() } else { None }
 }
 
 fn as_ptr<R, P>(reference: &R) -> *const P {

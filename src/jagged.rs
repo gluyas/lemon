@@ -63,6 +63,10 @@ impl<T> Jagged<T> {
             self.indices.truncate(len + 1);
         }
     }
+
+    pub fn clear(&mut self) {
+        self.truncate(0);
+    }
 }
 
 impl<T> Jagged<T>

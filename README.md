@@ -13,23 +13,28 @@ In-development interactive toy, written in Rust. Exists for me to practice, deve
 - Rust standard library; other lightweight, de-facto-standard crates
 
 ### Controls
-Drag and scroll to manipulate the camera
 
 | Input | Action |
-| :---: | ----- |
+| :---: | ------ |
+| Mouse Drag | Orbit camera |
+| Mouse Scroll | Zoom camera |
 | `Space` | Reset current lemon |
 | `Ctrl` + `Space` | Create new lemon |
+| `Ctrl` + Scroll | Edit lemon scale |
+| `Alt` + Scroll | Edit lemon sagitta (width) |
 | `Esc` | Pause/Unpause simulation |
 | `←` `→` | Step through physics frames while paused |
 
 | Toggle | Debug Visualisation |
-| :--------: | ----------------------- |
+| :----: | ------------------- |
 | `A` | Model-space transform axes |
+| `S` | Torus cross-section |
 | `Z` | Lemon-Lemon collision detection constructions |
 | `X` | Lemon-Floor collision detection constructions |
 | `C` | Collision reaction and friction impulses |
-| `V` | Linear and angular velocity vectors  |
-| `B` | Bounding volumes  |
+| `V` | Linear and angular velocity vectors |
+| `B` | Bounding volumes |
+| `L` | Party mode |
 
 ## Current Features
 - Simple rigidbody dynamics simulation

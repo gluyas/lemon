@@ -72,6 +72,17 @@ impl Lemon {
             t: self.focal_radius() / self.scale,
         }
     }
+
+    pub fn mutate_shape(&mut self, s: f32, scale: f32) {
+        let old_phys = self.phys;
+        let old_angular_velocity = self.phys.get_inertia_inverse()
+                                 * self.phys.angular_momentum;
+        *self = Lemon::new(s, scale);
+        self.phys.velocity         = old_phys.velocity;
+        self.phys.position         = old_phys.position;
+        self.phys.orientation      = old_phys.orientation;
+        self.phys.angular_momentum = self.phys.get_inertia() * old_angular_velocity;
+    }
 }
 
 pub const MESH_RESOLUTION_T:      usize = 32;
