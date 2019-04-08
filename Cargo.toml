@@ -6,12 +6,10 @@ authors = ["Marc <marc.gluyas@gmail.com>"]
 build = "build.rs"
 
 [build-dependencies]
-gl_generator = "*"
+gl_generator = "0.11"
 
 [dependencies]
-lazy_static = "*"
-glutin = "*"
-cgmath = "*"
-png = "*"
-image = "*"
-rand = "0.4"
+glutin = "0.20"
+cgmath = "0.17"
+png = "0.14"
+rand = "0.6"
