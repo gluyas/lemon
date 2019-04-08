@@ -23,7 +23,7 @@ In-development interactive toy, written in Rust. Exists for me to practice, deve
 | `Ctrl` + Scroll | Edit lemon scale |
 | `Alt` + Scroll | Edit lemon sagitta (width) |
 | `Esc` | Pause/Unpause simulation |
-| `←` `→` | Step through physics frames while paused |
+| (`Ctrl` +) `←` `→` | Step through physics frames while paused |
 
 | Toggle | Debug Visualisation |
 | :----: | ------------------- |

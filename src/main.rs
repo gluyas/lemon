@@ -1,10 +1,7 @@
-#[macro_use]
-extern crate lazy_static;
 extern crate glutin;
 extern crate cgmath;
 extern crate png;
 extern crate rand;
-//extern crate image;
 
 macro_rules! vec4 {
     () => {
@@ -279,12 +276,13 @@ fn main() {
         .with_title("lemon")
         .with_dimensions(dpi::LogicalSize::new(WIDTH as _, HEIGHT as _))
         .with_resizable(false);
-    let context = ContextBuilder::new()
-        .with_multisampling(2);
-    let gl_window = GlWindow::new(window, context, &events_loop).unwrap();
+    let windowed_context = ContextBuilder::new()
+        .with_multisampling(2)
+        .build_windowed(window, &events_loop)
+        .unwrap();
 
-    unsafe { gl_window.make_current().unwrap(); }
-    gl::load_with(|symbol| gl_window.get_proc_address(symbol) as *const _);
+    unsafe { windowed_context.make_current().unwrap(); }
+    gl::load_with(|symbol| windowed_context.get_proc_address(symbol) as *const _);
 
     #[repr(C)]
     struct Camera {
@@ -464,6 +462,8 @@ fn main() {
 
     let mut debug_frame_store             = Jagged::new();
     let mut debug_frame_current           = 0;
+    let mut debug_frame_step              = 0;
+    let mut debug_frame_step_delay        = 0;       
     macro_rules! debug_frame_store_reset { () => {
         debug_frame_store.clear();
         debug_frame_current = 0;
@@ -486,6 +486,7 @@ fn main() {
     let mut exit = false;
     while !exit {
         let frame_start_time = Instant::now();
+
         // POLL INPUT
         events_loop.poll_events(|event| match event {
             Event::WindowEvent { event, .. } => match event {
@@ -537,6 +538,7 @@ fn main() {
                 },
                 _ => (),
             },
+
             Event::DeviceEvent { event, .. } => match event {
                 DeviceEvent::Key(KeyboardInput {
                     state, modifiers, virtual_keycode: Some(key), ..
@@ -571,23 +573,23 @@ fn main() {
                     VirtualKeyCode::Escape => if let ElementState::Pressed = state {
                         debug_pause_next_frame = !debug_pause;
                     },
-                    VirtualKeyCode::Left => if let ElementState::Pressed = state {
-                        if debug_pause && debug_frame_current > 0 {
-                            debug_frame_current -= 1;
-                            lemons.clear();
-                            lemons.extend_from_slice(&debug_frame_store[debug_frame_current]);
-                        }
-                    },
-                    VirtualKeyCode::Right => if let ElementState::Pressed = state {
-                        if debug_pause && debug_frame_current + 1 < debug_frame_store.len() {
-                            debug_frame_current += 1;
-                            lemons.clear();
-                            lemons.extend_from_slice(&debug_frame_store[debug_frame_current]);
-                        }
-                    },
                     VirtualKeyCode::Space => if let ElementState::Pressed = state {
                         if modifiers.ctrl { spawn_lemon(&mut lemons, vbo_lemon_s); }
                         else              { reset_lemon(&mut current_lemon!()); }
+                    },
+                    VirtualKeyCode::Right => {
+                        if let ElementState::Pressed = state {
+                            debug_frame_step = if modifiers.ctrl { 6 } else { 1 };
+                        } else if debug_frame_step > 0 {
+                            debug_frame_step = 0;
+                        }
+                    },
+                    VirtualKeyCode::Left => {
+                        if let ElementState::Pressed = state {
+                            debug_frame_step = if modifiers.ctrl { -6 } else { -1 };
+                        } else if debug_frame_step < 0 {
+                            debug_frame_step = 0;
+                        }
                     },
                     _ => (),
                 },
@@ -595,6 +597,26 @@ fn main() {
             },
             _ => (),
         });
+
+        // STEP THROUGH FRAMES WHILE PAUSE
+        if debug_pause && debug_frame_step != 0 {
+            if debug_frame_step_delay == 0 || debug_frame_step_delay > FRAME_RATE / 5 {
+                let target_frame = debug_frame_current as isize + debug_frame_step;
+                if target_frame < 0 {
+                    debug_frame_current = 0;
+                } else if target_frame >= debug_frame_store.len() as isize {
+                    debug_frame_current = debug_frame_store.len() - 1;
+                } else {
+                    debug_frame_current = target_frame as usize;
+                }
+                lemons.clear();
+                lemons.extend_from_slice(&debug_frame_store[debug_frame_current]);
+            }
+            debug_frame_step_delay += 1;
+        } else {
+            debug_frame_step_delay = 0;
+        }
+
         // UPDATE PAUSE STATE
         if debug_pause_next_frame != debug_pause {
             if debug_pause {
@@ -972,7 +994,7 @@ fn main() {
             gl::DepthFunc(gl::ALWAYS);
             debug.render_frame();
         }
-        gl_window.swap_buffers().expect("buffer swap failed");
+        windowed_context.swap_buffers().expect("buffer swap failed");
         if let Some(sleep_duration) = FRAME_DURATION.checked_sub(frame_start_time.elapsed()) {
             thread::sleep(sleep_duration);
         }
