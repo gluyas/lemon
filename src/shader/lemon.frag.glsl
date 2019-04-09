@@ -48,5 +48,4 @@ void main() {
 
     gl_FragColor = (ambient + lambert) * u_lemon_color + specular * vec4(1.0);
     gl_FragColor.a = u_lemon_color.a;
-    if (v_position.z <= 0.0) gl_FragColor = vec4(0.0);
 }

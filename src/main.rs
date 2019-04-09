@@ -116,6 +116,9 @@ use crate::jagged::Jagged;
 mod lemon;
 use crate::lemon::{Lemon, NormalizedLemon};
 
+mod phys;
+use crate::phys::{Collision, Rigidbody};
+
 mod debug_render;
 use crate::debug_render::DebugRender;
 
@@ -159,78 +162,14 @@ pub const TAU: f32 = PI * 2.0;
 type ElementIndex = u16;
 const ELEMENT_INDEX_TYPE: GLenum = gl::UNSIGNED_SHORT;
 
-#[derive(Copy, Clone, Debug)]
-pub struct Collision {
-    /// Point of collision. If overlapping, the midpoint between the two objects.
-    pub point:  Point3,
-
-    /// Surface normal of collision. Points towards the first object.
-    pub normal: Vec3,
-
-    /// Minimum displacment along `normal` required to separate the objects.
-    /// The objects' surfaces will kiss at `point` when translated by half `depth`
-    /// along `normal` and `-normal` respectively.
-    pub depth:  f32,
-}
-
-impl Neg for Collision {
-    type Output = Collision;
-    fn neg(mut self) -> Collision {
-        self.normal = self.normal.neg();
-        self
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct Rigidbody {
-    pub mass:     f32,
-    pub position: Point3,
-    pub velocity: Vec3,
-
-    pub inertia_local:    Vec3,
-    pub orientation:      Quat,
-    pub angular_momentum: Vec3,
-}
-
-impl Rigidbody {
-    pub fn get_transform(&self) -> Mat4 {
-        Mat4::from_translation(vec3!(self.position))
-            * Mat4::from(Mat3::from(self.orientation))
-    }
-
-    pub fn get_transform_inverse(&self) -> Mat4 {
-        Mat4::from(Mat3::from(self.orientation).transpose())
-            * Mat4::from_translation(-vec3!(self.position))
-    }
-
-    pub fn get_inertia(&self) -> Mat3 {
-        let rotation = Mat3::from(self.orientation);
-        rotation * Mat3::from_diagonal(self.inertia_local) * rotation.transpose()
-    }
-
-    pub fn get_inertia_inverse(&self) -> Mat3 {
-        let rotation = Mat3::from(self.orientation);
-        rotation * Mat3::from_diagonal(1.0 / self.inertia_local) * rotation.transpose()
-    }
-}
-
-impl Default for Rigidbody {
-    fn default() -> Self {
-        Rigidbody {
-            mass: 0.0,
-            position: point3!(),
-            velocity: vec3!(),
-            inertia_local: vec3!(),
-            orientation: Quat::one(),
-            angular_momentum: vec3!(),
-        }
-    }
-}
-
 const LEMON_COLOR: Vec4 = color!(0xFFF44F_FF);
 const BACK_COLOR:  Vec4 = color!(0xA2EFEF_00);
 
 const LEMON_TEX_SIZE: usize = 1;
+
+const ARENA_WIDTH:     f32   = ARENA_GRID_STEP * ARENA_GRID_DIVS as f32;
+const ARENA_GRID_DIVS: usize = 20;
+const ARENA_GRID_STEP: f32   = 1.5 * METER;
 
 const FRAME_RATE:       usize    = 60;
 const FRAME_DELTA_TIME: f32      = 1.0 / FRAME_RATE as f32;
@@ -252,14 +191,6 @@ use crate::si::*;
 
 const MAX_BODIES: usize = 256;
 
-// TODO: 9.81 gravity and scale lemons to a resonable size?
-const PHYS_GRAVITY: Vec3 = vec3!(0.0, 0.0, -23.0 * METER / SECOND / SECOND);
-
-const LEMON_COLLISION_ELASTICITY: f32 = 0.15;
-
-const LEMON_FRICTION:     f32 = 1.55 * NEWTON / NEWTON;
-const LEMON_ANGULAR_DRAG: f32 = 1.0 * NEWTON * METER;
-
 const LEMON_SCALE_MAX:    f32 = 1.25;
 const LEMON_SCALE_MIN:    f32 = 0.75;
 const LEMON_S_MIN:        f32 = 0.50;
@@ -273,8 +204,8 @@ const HEIGHT: usize = 720;
 fn main() {
     let mut events_loop = EventsLoop::new();
     let window = WindowBuilder::new()
-        .with_title("lemon")
         .with_dimensions(dpi::LogicalSize::new(WIDTH as _, HEIGHT as _))
+        .with_title("lemon")
         .with_resizable(false);
     let windowed_context = ContextBuilder::new()
         .with_multisampling(2)
@@ -446,8 +377,9 @@ fn main() {
     let mut debug            = DebugRender::new();
     let mut debug_depth_test = DebugRender::with_shared_context(&debug);
     {
-        let grid = make_line_strip_grid(point3!(), (VEC3_X*1.5, VEC3_Y*1.5), 20);
-        debug_depth_test.draw_line(&color!(0xFFFFFFFF).truncate(), !0, &grid);
+        debug_depth_test.draw_line(&color!(0xFFFFFFFF).truncate(), !0, &make_line_strip_grid(
+            point3!(), (VEC3_X*ARENA_GRID_STEP, VEC3_Y*ARENA_GRID_STEP), ARENA_GRID_DIVS,
+        ));
 
         debug.draw_axes(1.5, !0, &Mat4::identity());
     }
@@ -463,7 +395,7 @@ fn main() {
     let mut debug_frame_store             = Jagged::new();
     let mut debug_frame_current           = 0;
     let mut debug_frame_step              = 0;
-    let mut debug_frame_step_delay        = 0;       
+    let mut debug_frame_step_delay        = 0;
     macro_rules! debug_frame_store_reset { () => {
         debug_frame_store.clear();
         debug_frame_current = 0;
@@ -598,7 +530,7 @@ fn main() {
             _ => (),
         });
 
-        // STEP THROUGH FRAMES WHILE PAUSE
+        // STEP THROUGH FRAMES WHILE PAUSED
         if debug_pause && debug_frame_step != 0 {
             if debug_frame_step_delay == 0 || debug_frame_step_delay > FRAME_RATE / 5 {
                 let target_frame = debug_frame_current as isize + debug_frame_step;
@@ -627,10 +559,11 @@ fn main() {
             debug_pause = debug_pause_next_frame;
         }
 
-        // UPDATE PHYSICS
+        // TIMESTEP INTEGRATION AND FIXED-OBJECT COLLISIONS
         for (index, lemon) in lemons.iter_mut().enumerate() {
-            if debug_lemon_party && !debug_pause { // this is hacky as shit but important!
-                use mem::transmute as tm;
+            // LEMON PARTY CODE
+            if debug_lemon_party && !debug_pause {
+                use mem::transmute as tm; // this is hacky as shit but important!
 
                 const LSB_MASK:   u32 = 0x1;
                 const PARTY_RATE: f32 = 0.5 / SECOND;
@@ -660,27 +593,9 @@ fn main() {
                 }
             }
 
-            if !debug_pause {   // INTEGRATE RIGIDBODIES
-                lemon.phys.position += lemon.phys.velocity;
-                lemon.phys.velocity += PHYS_GRAVITY;
-
-                let inertia_inverse  = lemon.phys.get_inertia_inverse();
-                let angular_velocity = Quat {
-                    v: inertia_inverse * lemon.phys.angular_momentum,
-                    s: 0.0,
-                };
-                lemon.phys.orientation += angular_velocity / 2.0 * lemon.phys.orientation;
-                lemon.phys.orientation  = lemon.phys.orientation.normalize();
-
-                let angular_drag = {
-                    let mag  = lemon.phys.angular_momentum.magnitude();
-                    if LEMON_ANGULAR_DRAG > mag {
-                        lemon.phys.angular_momentum
-                    } else {
-                        lemon.phys.angular_momentum / mag * LEMON_ANGULAR_DRAG
-                    }
-                };
-                lemon.phys.angular_momentum -= angular_drag;
+            // INTEGRATE RIGIDBODIES
+            if !debug_pause {
+                phys::integrate_rigidbody_fixed_timestep(&mut lemon.phys);
             }
 
             if debug_draw_motion_vectors {
@@ -696,75 +611,44 @@ fn main() {
                 );
             }
 
+            // TEST STATIC WALL-PLANE COLLISIONS
+            if !debug_pause {
+                for &dir in [
+                    vec2!(1.0, 0.0), vec2!(-1.0, 0.0), vec2!(0.0, 1.0), vec2!(0.0, -1.0)
+                ].into_iter() {
+                    if vec2!(lemon.phys.position).dot(dir) >= ARENA_WIDTH - lemon.scale {
+                        let wall_normal = -dir.extend(0.0);
+                        if let Some(collision) = lemon::get_collision_halfspace(
+                            &lemon, (wall_normal, -ARENA_WIDTH), None,
+                        ) {
+                            phys::resolve_collision_static(
+                                collision, &mut lemon.phys, None,
+                            );
+                        }
+                    }
+                }
+            }
+
+            // TEST STATIC FLOOR-PLANE COLLISION
             let floor_collision = lemon::get_collision_halfspace(
                 &lemon, (VEC3_Z, 0.0),
                 some_if(debug_draw_colliders_floor, &mut debug),
             );
-
-            // COLLISION RESPONSE
-            if let Some(mut collision) = floor_collision {
-                // push object out of plane // TODO: solve for velocity, orientation
+            if let Some(collision) = floor_collision {
                 if !debug_pause {
-                    lemon.phys.position += collision.normal * collision.depth;
-                    collision.point     += collision.normal * collision.depth / 2.0;
-                }
-
-                let inertia_inverse  = lemon.phys.get_inertia_inverse();
-                let angular_velocity = inertia_inverse * lemon.phys.angular_momentum;
-
-                let offset   = collision.point - lemon.phys.position;
-                let velocity = lemon.phys.velocity + angular_velocity.cross(offset);
-
-                let collision_tangent = proj_onto_plane(velocity.normalize(), collision.normal);
-
-                let reaction = {
-                    let proj    = -(1.0 + LEMON_COLLISION_ELASTICITY)
-                                * velocity.dot(collision.normal);
-                    let linear  = 1.0 / lemon.phys.mass;
-                             // + 1.0 / infinity  => 0.0
-                    let angular = ( inertia_inverse
-                                  * offset.cross(collision.normal)
-                                  ).cross(offset);
-                             // + [infinity]^-1 => 0.0
-                    proj / (linear + angular.dot(collision.normal))
-                };
-                let reaction_vector = reaction * collision.normal;
-
-                let friction = {
-                    let proj    = velocity.dot(collision_tangent);
-                    let linear  = 1.0 / lemon.phys.mass;
-                    let angular = ( inertia_inverse
-                                  * offset.cross(collision_tangent)
-                                  ).cross(offset);
-
-                    let cap     = proj / (linear + angular.dot(collision_tangent));
-                    cap.min(reaction * LEMON_FRICTION).neg()
-                };
-                let friction_vector = friction * collision_tangent;
-
-                if !debug_pause {
-                    let impulse = reaction_vector + friction_vector;
-
-                    lemon.phys.velocity         += impulse / lemon.phys.mass;
-                    lemon.phys.angular_momentum += offset.cross(impulse);
-                }
-
-                if debug_draw_collision_response {
-                    debug.draw_ray(
-                        &color!(0x0000AFFF).truncate(), 1, &collision.point,
-                        &(friction_vector / lemon.phys.mass / FRAME_DELTA_TIME)
+                    phys::resolve_collision_static(
+                        collision, &mut lemon.phys,
+                        some_if(debug_draw_collision_response, &mut debug),
                     );
-                    debug.draw_ray(
-                        &color!(0xAF0000FF).truncate(), 1, &collision.point,
-                        &(reaction_vector / lemon.phys.mass / FRAME_DELTA_TIME)
-                    );
-                    debug.draw_ray(
-                        &color!(0x00AF00FF).truncate(), 1, &collision.point,
-                        &(velocity / FRAME_DELTA_TIME)
+                } else if debug_draw_collision_response {
+                    let mut temp_lemon_phys = lemon.phys.clone();
+                    phys::resolve_collision_static(
+                        collision, &mut temp_lemon_phys, Some(&mut debug),
                     );
                 }
             }
 
+            // DEBUG VISUALISATIONS
             if debug_draw_bounding_volumes {
                 debug_depth_test.draw_line(&color!(0x708090FF).truncate(), 1,
                     &make_line_strip_capsule_billboard(
@@ -796,6 +680,8 @@ fn main() {
                 ));
             }
 
+            // UPLOAD TRANSFORM DATA
+            // TODO: upload transforms in a single batch
             unsafe {
                 gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transform);
                 gl::buffer_sub_data(
@@ -812,9 +698,9 @@ fn main() {
             debug_frame_store.push_copy(&lemons);
         }
 
-        // TEST LEMON COLLISIONS
+        // DYNAMIC OBJECT COLLISIONS
         let lemons_len = lemons.len();
-        for lemon_index in 0..lemons_len {
+        for lemon_index in 0..lemons_len { // iterate over (un-ordered) pairs of objects
             let (lemon, other_lemons) = {
                 let (heads, tails) = lemons.split_at_mut(lemon_index + 1);
                 (&mut heads[lemon_index], tails)
@@ -831,98 +717,23 @@ fn main() {
                                         && ( lemons_len <= 4
                                           || ( lemon.phys.position-other.phys.position
                                              ).magnitude2() <= 9.0 );
-                let collision = {
-                    if bounding_volume_overlap || force_collision_test {
-                        lemon::get_collision_lemon(
-                            &lemon, &other,
-                            some_if(debug_draw_colliders_lemon, &mut debug),
-                        )
-                    } else {
-                        None
-                    }
-                };
+
+                let collision = option_if_then(
+                    bounding_volume_overlap || force_collision_test,
+                    || lemon::get_collision_lemon(
+                        &lemon, &other, some_if(debug_draw_colliders_lemon, &mut debug),
+                    ),
+                );
 
                 if let Some(collision) = collision {
                     assert!(bounding_volume_overlap, "lemon collision without BV overlap");
                     assert!(collision.depth >= 0.0, "collision reported negative depth");
 
-                    if !debug_pause { // naively correct interpenetration
-                        lemon.phys.position += collision.normal * collision.depth / 2.0;
-                        other.phys.position -= collision.normal * collision.depth / 2.0;
-                    }
-
-                    let lemon_inertia_inverse = lemon.phys.get_inertia_inverse();
-                    let lemon_point_offset    = collision.point - lemon.phys.position;
-                    let lemon_point_velocity  = ( lemon_inertia_inverse
-                                                * lemon.phys.angular_momentum
-                                                ).cross(lemon_point_offset)
-                                              + lemon.phys.velocity;
-
-                    let other_inertia_inverse = other.phys.get_inertia_inverse();
-                    let other_point_offset    = collision.point - other.phys.position;
-                    let other_point_velocity  = ( other_inertia_inverse
-                                                * other.phys.angular_momentum
-                                                ).cross(other_point_offset)
-                                              + other.phys.velocity;
-
-                    let relative_velocity = lemon_point_velocity - other_point_velocity;
-                    let collision_tangent = proj_onto_plane(relative_velocity, collision.normal)
-                                           .normalize();
-                    let reaction = {
-                        let proj    = -(1.0 + LEMON_COLLISION_ELASTICITY) * collision.normal
-                                     .dot(relative_velocity);
-                        let linear  = 1.0 / lemon.phys.mass
-                                    + 1.0 / other.phys.mass;
-                        let angular = ( lemon_inertia_inverse
-                                      * lemon_point_offset.cross(collision.normal)
-                                      ).cross(lemon_point_offset)
-                                    + ( other_inertia_inverse
-                                      * other_point_offset.cross(collision.normal)
-                                      ).cross(other_point_offset);
-
-                        proj / (linear + angular.dot(collision.normal))
-                    };
-                    let reaction_vector = reaction * collision.normal;
-
-                    let friction = {
-                        let proj    = relative_velocity.dot(collision_tangent);
-                        let linear  = 1.0 / lemon.phys.mass
-                                    + 1.0 / other.phys.mass;
-                        let angular = ( lemon_inertia_inverse
-                                      * lemon_point_offset.cross(collision_tangent)
-                                      ).cross(lemon_point_offset)
-                                    + ( other_inertia_inverse
-                                      * other_point_offset.cross(collision_tangent)
-                                      ).cross(other_point_offset);
-
-                        let cap     = proj / (linear + angular.dot(collision_tangent));
-                        cap.min(reaction * LEMON_FRICTION).neg()
-                    };
-                    let friction_vector = friction * collision_tangent;
-
-                    if debug_draw_collision_response {
-                        debug.draw_ray(&color!(0x0000AFFF).truncate(), 1,
-                            &collision.point,
-                            &(friction_vector / lemon.phys.mass / FRAME_DELTA_TIME)
-                        );
-                        debug.draw_ray(&color!(0xAF0000FF).truncate(), 1,
-                            &collision.point,
-                            &(reaction_vector / lemon.phys.mass / FRAME_DELTA_TIME),
-                        );
-                        debug.draw_ray(&color!(0x00AF00FF).truncate(), 1,
-                            &collision.point,
-                            &(relative_velocity / FRAME_DELTA_TIME),
-                        );
-                    }
-
                     if !debug_pause {
-                        let impulse = reaction_vector + friction_vector;
-
-                        lemon.phys.velocity         += impulse / lemon.phys.mass;
-                        lemon.phys.angular_momentum += lemon_point_offset.cross(impulse);
-                        other.phys.velocity         -= impulse / other.phys.mass;
-                        other.phys.angular_momentum -= other_point_offset.cross(impulse);
-
+                        phys::resolve_collision_dynamic(
+                            collision, &mut lemon.phys, &mut other.phys,
+                            some_if(debug_draw_collision_response, &mut debug),
+                        );
                         unsafe {
                             gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transform);
                             gl::buffer_sub_data(
@@ -936,6 +747,13 @@ fn main() {
                                 slice::from_ref(&other.get_transform_with_scale()),
                             );
                         }
+                    } else if debug_draw_collision_response { // draw debug w/o side effects
+                        let mut temp_lemon_phys = lemon.phys.clone();
+                        let mut temp_other_phys = other.phys.clone();
+                        phys::resolve_collision_dynamic(
+                            collision, &mut temp_lemon_phys, &mut temp_other_phys,
+                            Some(&mut debug),
+                        );
                     }
                 }
             }
