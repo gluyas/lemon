@@ -391,6 +391,7 @@ fn main() {
     let mut debug_draw_motion_vectors     = false;
     let mut debug_draw_collision_response = false;
     let mut debug_lemon_party             = false;
+    let mut debug_spin_between_frames     = false;
 
     let mut debug_frame_store             = Jagged::new();
     let mut debug_frame_current           = 0;
@@ -502,12 +503,15 @@ fn main() {
                     VirtualKeyCode::L => if let ElementState::Pressed = state {
                         debug_lemon_party = !debug_lemon_party;
                     },
-                    VirtualKeyCode::Escape => if let ElementState::Pressed = state {
-                        debug_pause_next_frame = !debug_pause;
+                    VirtualKeyCode::T => if let ElementState::Pressed = state {
+                        debug_spin_between_frames = modifiers.ctrl;
                     },
                     VirtualKeyCode::Space => if let ElementState::Pressed = state {
                         if modifiers.ctrl { spawn_lemon(&mut lemons, vbo_lemon_s); }
                         else              { reset_lemon(&mut current_lemon!()); }
+                    },
+                    VirtualKeyCode::Escape => if let ElementState::Pressed = state {
+                        debug_pause_next_frame = !debug_pause;
                     },
                     VirtualKeyCode::Right => {
                         if let ElementState::Pressed = state {
@@ -813,8 +817,15 @@ fn main() {
             debug.render_frame();
         }
         windowed_context.swap_buffers().expect("buffer swap failed");
-        if let Some(sleep_duration) = FRAME_DURATION.checked_sub(frame_start_time.elapsed()) {
-            thread::sleep(sleep_duration);
+
+        // AWAIT NEXT FRAME
+        if !debug_spin_between_frames {
+            let remaining_time = FRAME_DURATION.checked_sub(frame_start_time.elapsed());
+            if let Some(sleep_duration) = remaining_time {
+                thread::sleep(sleep_duration);
+            }
+        } else {
+            while frame_start_time.elapsed() < FRAME_DURATION { }
         }
     }
 }
