@@ -5,6 +5,32 @@ mod bindings {
 }
 pub use crate::gl::bindings::*;
 
+#[macro_export]
+macro_rules! gl_with_temp_state {
+    ($($get:ident),+, $block:block) => { {
+        $(
+            #[allow(non_snake_case)]
+            let $get = gl::get(gl::$get);
+        )+
+        let result = $block;
+        $(
+            gl_pop_temp_state!($get, $get);
+        )+
+        result
+    } }
+}
+
+macro_rules! gl_pop_temp_state {
+    ($temp:ident, CURRENT_PROGRAM)       => { gl::UseProgram($temp) };
+    ($temp:ident, VERTEX_ARRAY_BINDING)  => { gl::BindVertexArray($temp) };
+    ($temp:ident, ARRAY_BUFFER_BINDING)  => { gl::BindBuffer(gl::ARRAY_BUFFER, $temp) };
+    ($temp:ident, ACTIVE_TEXTURE)        => { gl::ActiveTexture($temp) };
+    ($temp:ident, TEXTURE_BINDING_2D)    => { gl::BindTexture(gl::TEXTURE_2D, $temp) };
+    ($temp:ident, TEXTURE_BINDING_RECTANGLE) => {
+        gl::BindTexture(gl::TEXTURE_RECTANGLE, $temp)
+    };
+}
+
 #[inline]
 pub unsafe fn buffer_data<T>(target: GLenum, data: &[T], usage: GLenum) {
     gl::BufferData(
@@ -78,6 +104,34 @@ unsafe impl GlGet for GLdouble {
 pub unsafe fn get<T: GlGet>(parameter: GLenum) -> T {
     let mut result: T = mem::uninitialized(); T::GL_GET(parameter, &mut result);
     result
+}
+
+bitflags! {
+    pub struct Error: GLenum {
+        const NO_ERROR                      = gl::NO_ERROR;
+        const INVALID_ENUM                  = gl::INVALID_ENUM;
+        const INVALID_VALUE                 = gl::INVALID_VALUE;
+        const INVALID_OPERATION             = gl::INVALID_OPERATION;
+        const INVALID_FRAMEBUFFER_OPERATION = gl::INVALID_FRAMEBUFFER_OPERATION;
+        const OUT_OF_MEMORY                 = gl::OUT_OF_MEMORY;
+    }
+}
+
+pub unsafe fn get_error() -> Result<(), Error> {
+    let mut error = Error::NO_ERROR;
+    loop {
+        let next_error = gl::GetError();
+        if next_error == gl::NO_ERROR {
+            break;
+        } else {
+            error.bits |= next_error;
+        }
+    }
+    if error == Error::NO_ERROR {
+        Ok(())
+    } else {
+        Err(error)
+    }
 }
 
 pub fn compile_shader(src: &str, ty: GLenum) -> GLuint {

@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate bitflags;
 extern crate glutin;
 extern crate cgmath;
 extern crate png;
@@ -107,6 +109,11 @@ macro_rules! color {
     );
 }
 
+pub const fn short_color(r: u16, g: u16, b: u16, a: bool) -> u16 {
+    0 | r << 11 | g << 6 | b << 1 | a as u16
+}
+
+#[macro_use]
 mod gl;
 use crate::gl::types::*;
 
@@ -121,6 +128,9 @@ use crate::phys::{Collision, Rigidbody};
 
 mod debug_render;
 use crate::debug_render::DebugRender;
+
+mod debug_ui;
+use crate::debug_ui::{DebugUi, Histogram};
 
 use glutin::*;
 
@@ -174,6 +184,14 @@ const ARENA_GRID_STEP: f32   = 1.5 * METER;
 const FRAME_RATE:       usize    = 60;
 const FRAME_DELTA_TIME: f32      = 1.0 / FRAME_RATE as f32;
 const FRAME_DURATION:   Duration = Duration::from_nanos((1.0e+9 / FRAME_RATE as f64) as u64);
+
+const HISTOGRAM_WIDTH:       usize = 3 * HEIGHT / 3;
+const HISTOGRAM_HEIGHT:      usize = HEIGHT / 3;
+const HISTOGRAM_X:           isize = (WIDTH - HISTOGRAM_WIDTH) as isize;
+const HISTOGRAM_Y:           isize = (HEIGHT / 16) as isize;
+const HISTOGRAM_BAR_WIDTH:   usize = 2;
+const HISTOGRAM_BAR_SPACING: usize = 0;
+const HISTOGRAM_NANO_PER_PX: u32   = FRAME_DURATION.subsec_nanos() / HISTOGRAM_HEIGHT as u32;
 
 /// Constants for converting from human-readable SI units into per-frame units
 mod si {
@@ -383,6 +401,9 @@ fn main() {
 
         debug.draw_axes(1.5, !0, &Mat4::identity());
     }
+
+    let mut debug_ui = DebugUi::new(WIDTH, HEIGHT, gl::TEXTURE1);
+
     let mut debug_draw_axes               = false;
     let mut debug_draw_torus_section      = false;
     let mut debug_draw_colliders_floor    = false;
@@ -393,11 +414,20 @@ fn main() {
     let mut debug_lemon_party             = false;
     let mut debug_spin_between_frames     = false;
 
+    let mut debug_histogram               = Histogram::new(
+        HISTOGRAM_X, HISTOGRAM_Y, HISTOGRAM_WIDTH, HISTOGRAM_HEIGHT,
+    );
+    let mut debug_histogram_logging       = true;
+    let mut debug_histogram_display       = false;
+    fn get_histogram_bar_height(elapsed: Duration) -> usize {
+        (elapsed.subsec_nanos() / HISTOGRAM_NANO_PER_PX) as usize
+    }
+
     let mut debug_frame_store             = Jagged::new();
     let mut debug_frame_current           = 0;
     let mut debug_frame_step              = 0;
     let mut debug_frame_step_delay        = 0;
-    macro_rules! debug_frame_store_reset { () => {
+    macro_rules! debug_frame_store_clear { () => {
         debug_frame_store.clear();
         debug_frame_current = 0;
         debug_frame_store.push_copy(&lemons);
@@ -419,6 +449,7 @@ fn main() {
     let mut exit = false;
     while !exit {
         let frame_start_time = Instant::now();
+        assert!(debug_histogram.is_buffer_empty(), "dirty histogram buffer at start of frame");
 
         // POLL INPUT
         events_loop.poll_events(|event| match event {
@@ -454,7 +485,7 @@ fn main() {
                                     current_lemon_index!(), slice::from_ref(&normalized.s)
                                 );
                             }
-                            debug_frame_store_reset!();
+                            debug_frame_store_clear!();
                             Some(new_s)
                         } else { None }
                     });
@@ -502,6 +533,24 @@ fn main() {
                     },
                     VirtualKeyCode::L => if let ElementState::Pressed = state {
                         debug_lemon_party = !debug_lemon_party;
+                    },
+                    VirtualKeyCode::H => if let ElementState::Pressed = state {
+                        if debug_histogram_display {
+                            debug_ui.clear_pixels();
+                            debug_histogram_display = false;
+                        } else {
+                            debug_histogram_display = true;
+                        }
+                    },
+                    VirtualKeyCode::J => if let ElementState::Pressed = state {
+                        if !modifiers.ctrl {
+                            if !debug_histogram_logging {
+                                debug_histogram.clear_pixels();
+                            }
+                            debug_histogram_logging = true;
+                        } else {
+                            debug_histogram_logging = false;
+                        }
                     },
                     VirtualKeyCode::T => if let ElementState::Pressed = state {
                         debug_spin_between_frames = modifiers.ctrl;
@@ -562,6 +611,9 @@ fn main() {
             }
             debug_pause = debug_pause_next_frame;
         }
+        debug_histogram.add_bar_segment("input processing",
+            short_color(31, 31, 31, true), get_histogram_bar_height(frame_start_time.elapsed()),
+        );
 
         // TIMESTEP INTEGRATION AND FIXED-OBJECT COLLISIONS
         for (index, lemon) in lemons.iter_mut().enumerate() {
@@ -695,12 +747,14 @@ fn main() {
                 );
             }
         }
-
         if debug_lemon_party {
-            debug_frame_store_reset!();
+            debug_frame_store_clear!();
         } else if !debug_pause {
             debug_frame_store.push_copy(&lemons);
         }
+        debug_histogram.add_bar_segment("rigidbody integration, static collisions",
+            short_color(31, 31, 0, true), get_histogram_bar_height(frame_start_time.elapsed()),
+        );
 
         // DYNAMIC OBJECT COLLISIONS
         let lemons_len = lemons.len();
@@ -762,6 +816,9 @@ fn main() {
                 }
             }
         }
+        debug_histogram.add_bar_segment("dynamic collisions",
+            short_color(31, 15, 0, true), get_histogram_bar_height(frame_start_time.elapsed()),
+        );
 
         // UPDATE CAMERA
         if let Some(movement) = mouse_drag.or(Some(vec2!())) {
@@ -797,12 +854,14 @@ fn main() {
             mouse_drag = None;
         }
 
-        // FULL RENDER
+        // RENDER SCENE
         unsafe {
             gl::ClearColor(BACK_COLOR.x, BACK_COLOR.y, BACK_COLOR.z, BACK_COLOR.w);
             gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
-            gl::Enable(gl::CULL_FACE);
             gl::Enable(gl::DEPTH_TEST);
+            gl::Enable(gl::CULL_FACE);
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
             //gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
             gl::DepthFunc(gl::LESS);
             gl::DrawElementsInstanced(
@@ -815,8 +874,20 @@ fn main() {
             debug_depth_test.render_frame();
             gl::DepthFunc(gl::ALWAYS);
             debug.render_frame();
+            if debug_histogram_display {
+                debug_histogram.copy_pixels_to_ui(&mut debug_ui);
+                debug_ui.render();
+            }
         }
+        debug_histogram.add_bar_segment("camera update, draw calls",
+            short_color(0, 31, 0, true), get_histogram_bar_height(frame_start_time.elapsed()),
+        );
+
         windowed_context.swap_buffers().expect("buffer swap failed");
+        debug_histogram.add_bar_segment("buffer swap",
+            short_color(0, 31, 31, true),
+            get_histogram_bar_height(frame_start_time.elapsed()),
+        );
 
         // AWAIT NEXT FRAME
         if !debug_spin_between_frames {
@@ -826,6 +897,32 @@ fn main() {
             }
         } else {
             while frame_start_time.elapsed() < FRAME_DURATION { }
+        }
+        if !debug_pause { debug_frame_current += 1; }
+
+        // ADVANCE HISTOGRAM FOR DISPLAY NEXT FRAME
+        if debug_histogram_logging {
+            let wakeup_mark = get_histogram_bar_height(frame_start_time.elapsed());
+            debug_histogram.add_bar_segment("frame sleep",
+                0, HISTOGRAM_HEIGHT.min(wakeup_mark),
+            );
+            if wakeup_mark < HISTOGRAM_HEIGHT {
+                debug_histogram.add_bar_segment("frame sleep defecit",
+                    short_color(0, 0, 31, true), HISTOGRAM_HEIGHT,
+                );
+            } else {
+                debug_histogram.add_bar_segment("frame sleep excess",
+                    short_color(31, 0, 0, true), wakeup_mark,
+                );
+            }
+            debug_histogram.add_line("expected frame duration",
+                short_color(0, 0, 0, true), HISTOGRAM_HEIGHT - 1,
+            );
+            debug_histogram.render_and_flush_buffer(
+                HISTOGRAM_BAR_WIDTH, HISTOGRAM_BAR_SPACING
+            );
+        } else {
+            debug_histogram.clear_buffer();
         }
     }
 }

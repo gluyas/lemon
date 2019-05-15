@@ -23,19 +23,24 @@ In-development interactive toy, written in Rust. Exists for me to practice, deve
 | `Ctrl` + Scroll | Edit lemon scale |
 | `Alt` + Scroll | Edit lemon sagitta (width) |
 | `Esc` | Pause/Unpause simulation |
-| [`Ctrl` +] `←` `→` | Step through physics frames while paused |
-| [`Ctrl` +] `T` | [Enable] / Disable thread spinning between frames |
+| (`Ctrl` +) `←` `→` | Step through physics frames while paused |
 
 | Toggle | Debug Visualisation |
 | :----: | ------------------- |
 | `A` | Model-space transform axes |
 | `S` | Torus cross-section |
+| `H` | Performance histogram |
 | `Z` | Lemon-Lemon collision detection constructions |
 | `X` | Lemon-Floor collision detection constructions |
 | `C` | Collision reaction and friction impulses |
 | `V` | Linear and angular velocity vectors |
 | `B` | Bounding volumes |
 | `L` | Party mode |
+
+| Key | Default | Modifiers | Program Setting |
+| :-: | :-----: | :-------: | --------------- |
+| `J` | Enable | `Ctrl`: Disable | Histogram data logging |
+| `T` | Sleep | `Ctrl`: Spin | Thread waiting method between frames |
 
 ## Current Features
 - Simple rigidbody dynamics simulation
