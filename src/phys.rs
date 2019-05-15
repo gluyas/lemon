@@ -1,7 +1,7 @@
 use super::*;
 
 // TODO: 9.81 gravity and scale lemons to a resonable size?
-const GRAVITY: Vec3 = vec3!(0.0, 0.0, -23.0 * METER / SECOND / SECOND);
+const GRAVITY: Vec3 = vec3!(0.0, 0.0, -27.0 * METER / SECOND / SECOND);
 
 const COLLISION_ELASTICITY: f32 = 0.15;
 
@@ -77,7 +77,7 @@ impl Default for Rigidbody {
 }
 
 pub fn integrate_rigidbody_fixed_timestep(rb: &mut Rigidbody) {
-    rb.position += rb.velocity;
+    rb.position += rb.velocity + GRAVITY/2.0;
     rb.velocity += GRAVITY;
 
     let angular_velocity = rb.get_inertia_inverse()  * rb.angular_momentum;
@@ -173,7 +173,8 @@ pub fn resolve_collision_dynamic(
     );
     rb1.position    += collision.normal * collision.depth * velocity_ratio;
     rb2.position    -= collision.normal * collision.depth * (1.0 - velocity_ratio);
-    collision.point += collision.normal * (velocity_ratio - 0.5);
+    collision.point += collision.normal * collision.depth * (velocity_ratio - 0.5);
+    collision.depth  = 0.0;
 
     let rb1_inertia_inverse = rb1.get_inertia_inverse();
     let rb1_point_offset    = collision.point - rb1.position;

@@ -523,10 +523,13 @@ pub fn get_collision_lemon(
                     debug,
                 )
             } else {
-                some_if_then(distance2 <= (lemon.radius + other.radius).powi(2), || Collision {
-                    point:  lemon_sphere + displacement / 2.0,
-                    normal: displacement.normalize().neg(),
-                    depth:  lemon.radius + other.radius - distance2.sqrt(),
+                some_if_then(distance2 <= (lemon.radius + other.radius).powi(2), || {
+                    let radii = lemon.radius + other.radius;
+                    Collision {
+                        point:  lemon_sphere + displacement * lemon.radius / radii,
+                        normal: displacement.normalize().neg(),
+                        depth:  radii - distance2.sqrt(),
+                    }
                 })
             }
         },
