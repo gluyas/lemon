@@ -446,15 +446,23 @@ fn main() {
     let mut mouse_drag: Option<Vec2> = Some(vec2!());
     let mut mouse_down = false;
 
-    let mut exit = false;
-    while !exit {
+    let mut window_in_focus = false;
+    'main: loop {
         let frame_start_time = Instant::now();
         assert!(debug_histogram.is_buffer_empty(), "dirty histogram buffer at start of frame");
 
         // POLL INPUT
+        let mut exit = false;
         events_loop.poll_events(|event| match event {
+            Event::WindowEvent{ event: WindowEvent::CloseRequested, .. } => {
+                exit = true;
+            },
+            Event::WindowEvent{ event: WindowEvent::Focused(focus), .. } => {
+                window_in_focus = focus;
+            },
+            _ if !window_in_focus || exit => { /* ignore input while out of focus */ },
+
             Event::WindowEvent { event, .. } => match event {
-                WindowEvent::CloseRequested => { exit = true; },
                 WindowEvent::MouseInput { button: MouseButton::Left, state, .. } => match state {
                     ElementState::Pressed  => { mouse_down = true; },
                     ElementState::Released => { mouse_down = false; },
@@ -582,6 +590,7 @@ fn main() {
             },
             _ => (),
         });
+        if exit { break 'main; }
 
         // STEP THROUGH FRAMES WHILE PAUSED
         if debug_pause && debug_frame_step != 0 {
