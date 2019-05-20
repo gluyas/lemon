@@ -121,7 +121,9 @@ pub fn make_base_mesh() -> LemonBaseMesh {
         assert!(z_index <= MESH_RESOLUTION_Z_HALF - 2, "unexpected z_index: {}", z_index);
 
         for i_theta in 0..MESH_RESOLUTION_T {
-            let theta = i_theta as f32 * TAU / MESH_RESOLUTION_T as f32;
+            // i_z term staggers polygon strips so adjacent triangles do not lie on a plane
+            let theta = i_theta   as f32 * TAU / MESH_RESOLUTION_T as f32
+                      + 0.5 * i_z as f32 * TAU / MESH_RESOLUTION_T as f32;
             points.push(point3!(
                 theta.cos(),
                 theta.sin(),

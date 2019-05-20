@@ -411,6 +411,7 @@ fn main() {
     let mut debug_draw_bounding_volumes   = false;
     let mut debug_draw_motion_vectors     = false;
     let mut debug_draw_collision_response = false;
+    let mut debug_draw_wireframe          = false;
     let mut debug_lemon_party             = false;
     let mut debug_spin_between_frames     = false;
 
@@ -538,6 +539,9 @@ fn main() {
                     },
                     VirtualKeyCode::B => if let ElementState::Pressed = state {
                         debug_draw_bounding_volumes = !debug_draw_bounding_volumes;
+                    },
+                    VirtualKeyCode::W => if let ElementState::Pressed = state {
+                        debug_draw_wireframe = !debug_draw_wireframe;
                     },
                     VirtualKeyCode::L => if let ElementState::Pressed = state {
                         debug_lemon_party = !debug_lemon_party;
@@ -871,8 +875,9 @@ fn main() {
             gl::Enable(gl::CULL_FACE);
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
-            //gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
             gl::DepthFunc(gl::LESS);
+
+            if debug_draw_wireframe { gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE); }
             gl::DrawElementsInstanced(
                 gl::TRIANGLES,
                 base_mesh.indices.len() as GLsizei,
@@ -880,9 +885,13 @@ fn main() {
                 ptr::null(),
                 lemons.len() as GLsizei,
             );
+            gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
+
             debug_depth_test.render_frame();
+
             gl::DepthFunc(gl::ALWAYS);
             debug.render_frame();
+
             if debug_histogram_display {
                 debug_histogram.copy_pixels_to_ui(&mut debug_ui);
                 debug_ui.render();

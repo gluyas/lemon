@@ -35,6 +35,7 @@ In-development interactive toy, written in Rust. Exists for me to practice, deve
 | `C` | Collision reaction and friction impulses |
 | `V` | Linear and angular velocity vectors |
 | `B` | Bounding volumes |
+| `W` | Wireframes |
 | `L` | Party mode |
 
 | Key | Default | Modifiers | Program Setting |
