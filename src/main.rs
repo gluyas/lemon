@@ -126,6 +126,9 @@ use crate::lemon::{Lemon, NormalizedLemon};
 mod phys;
 use crate::phys::{Collision, Rigidbody};
 
+mod geometry;
+use crate::geometry::*;
+
 mod debug_render;
 use crate::debug_render::DebugRender;
 
@@ -137,27 +140,34 @@ use glutin::*;
 use rand::random;
 
 use cgmath::{*, num_traits::{zero, one}};
-type Vec4   = cgmath::Vector4<f32>;
+type Real   = f32; // TODO: propagate this
+type Vec4   = cgmath::Vector4<Real>;
     const VEC4_X: Vec4 = vec4!(1.0, 0.0, 0.0, 0.0);
     const VEC4_Y: Vec4 = vec4!(0.0, 1.0, 0.0, 0.0);
     const VEC4_Z: Vec4 = vec4!(0.0, 0.0, 1.0, 0.0);
     const VEC4_W: Vec4 = vec4!(0.0, 0.0, 0.0, 1.0);
-type Vec3   = cgmath::Vector3<f32>;
+    const VEC4_0: Vec4 = vec4!(0.0, 0.0, 0.0, 0.0);
+    const VEC4_1: Vec4 = vec4!(1.0, 1.0, 1.0, 1.0);
+type Vec3   = cgmath::Vector3<Real>;
     const VEC3_X: Vec3 = vec3!(1.0, 0.0, 0.0);
     const VEC3_Y: Vec3 = vec3!(0.0, 1.0, 0.0);
     const VEC3_Z: Vec3 = vec3!(0.0, 0.0, 1.0);
-type Vec2   = cgmath::Vector2<f32>;
+    const VEC3_0: Vec3 = vec3!(0.0, 0.0, 0.0);
+    const VEC3_1: Vec3 = vec3!(1.0, 1.0, 1.0);
+type Vec2   = cgmath::Vector2<Real>;
     const VEC2_X: Vec2 = vec2!(1.0, 0.0);
     const VEC2_Y: Vec2 = vec2!(0.0, 1.0);
-type Point3 = cgmath::Point3<f32>;
-type Point2 = cgmath::Point2<f32>;
-type Mat4   = cgmath::Matrix4<f32>;
-type Mat3   = cgmath::Matrix3<f32>;
-type Quat   = cgmath::Quaternion<f32>;
+    const VEC2_0: Vec2 = vec2!(0.0, 0.0);
+    const VEC2_1: Vec2 = vec2!(1.0, 1.0);
+type Point3 = cgmath::Point3<Real>;
+type Point2 = cgmath::Point2<Real>;
+type Mat4   = cgmath::Matrix4<Real>;
+type Mat3   = cgmath::Matrix3<Real>;
+type Quat   = cgmath::Quaternion<Real>;
 
 use std::{
     default::Default,
-    f32::{self, consts::PI},
+    f32::{self, NAN, INFINITY, consts::PI},
     mem,
     ops::*,
     os::raw::c_char,
@@ -438,10 +448,11 @@ fn main() {
     let mut debug_pause                   = false;
     let mut debug_pause_next_frame        = false;
 
-    let mut camera_fovy: f32 = 30.0_f32.to_radians();
-    let mut camera_distance: f32 = 9.0_f32;
-    let mut camera_elevation: f32 = 0.0_f32.to_radians();
-    let mut camera_azimuth: f32 = 0.0_f32.to_radians();
+    let mut camera_fovy      = 30.0_f32.to_radians();
+    let mut camera_distance  = 9.0_f32;
+    let mut camera_elevation = 0.0_f32.to_radians();
+    let mut camera_azimuth   = 0.0_f32.to_radians();
+    let mut camera_target    = vec3!(0.0, 0.0, 0.0);
 
     let mut mouse_pos: Vec2 = vec2!();
     let mut mouse_drag: Option<Vec2> = Some(vec2!());
@@ -780,8 +791,8 @@ fn main() {
                 let other_index = lemon_index + other_relative_index + 1;
 
                 let bounding_volume_overlap = overlap_capsules(
-                    &lemon.get_bounding_capsule(),
-                    &other.get_bounding_capsule(),
+                    lemon.get_bounding_capsule(),
+                    other.get_bounding_capsule(),
                 );
                 let force_collision_test = debug_draw_colliders_lemon
                                         &&!debug_draw_bounding_volumes
@@ -798,7 +809,7 @@ fn main() {
 
                 if let Some(collision) = collision {
                     assert!(bounding_volume_overlap, "lemon collision without BV overlap");
-                    assert!(collision.depth >= 0.0, "collision reported negative depth");
+//                    assert!(collision.depth >= 0.0, "collision reported negative depth");
 
                     if !debug_pause {
                         phys::resolve_collision_dynamic(
@@ -945,84 +956,10 @@ fn main() {
     }
 }
 
-fn furthest_on_circle_from_point(circle: (Point3, Vec3, f32), point: Point3) -> Point3 {
-    let rel  = point - circle.0;
-    let proj = proj_onto_plane(rel, circle.1);
-    circle.0 - proj.normalize_to(circle.2)
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct Capsule {
-    pub line: (Point3, Point3),
-    pub radius: f32,
-}
-
 fn clamp01(t: f32) -> f32 {
     if      t <= 0.0 { 0.0 }
     else if t >= 1.0 { 1.0 }
     else             {  t  }
-}
-
-fn overlap_capsules(a: &Capsule, b: &Capsule) -> bool {
-    let (point_a, point_b) = closest_on_segments(a.line, b.line);
-    (point_b - point_a).magnitude2() <= (a.radius + b.radius).powi(2)
-}
-
-fn closest_on_segments(
-    (p1, q1): (Point3, Point3),
-    (p2, q2): (Point3, Point3),
-) -> (Point3, Point3) {
-    // adapted from Real-Time Collision Detection, Christer Ericson
-    let d1 = q1 - p1;
-    let d2 = q2 - p2;
-    let r  = p1 - p2;
-
-    let a = d1.dot(d1);
-    let e = d2.dot(d2);
-    let f = d2.dot(r);
-
-    if a == 0.0 && e == 0.0 {
-        return (p1, p2)
-    }
-    let (s, t) = {
-        if a == 0.0 {
-            (0.0, clamp01(f / e))
-        } else {
-            let c = d1.dot(r);
-            if e == 0.0 {
-                (clamp01(-c / a), 0.0)
-            } else {
-                let b = d1.dot(d2);
-                let denom = a*e - b*b;
-
-                let mut s = if denom != 0.0 {
-                    clamp01((b*f - c*e) / denom)
-                } else { 0.0 };
-
-                let mut t = b*s + f;
-                if t < 0.0 {
-                    t = 0.0;
-                    s = clamp01(-c / a);
-                } else if t > e {
-                    t = 1.0;
-                    s = clamp01((b - c) / a);
-                } else {
-                    t /= e;
-                }
-                (s, t)
-            }
-        }
-    };
-    (p1 + d1* s, p2 + d2*t)
-}
-
-fn intersect_ray_plane(ray: (Point3, Vec3), plane: (Vec3, f32)) -> Option<Point3> {
-    intersect_ray_plane_coefficient(ray, plane).map(|t| ray.0 + t * ray.1)
-}
-
-fn intersect_ray_plane_coefficient(ray: (Point3, Vec3), plane: (Vec3, f32)) -> Option<f32> {
-    Some((plane.0 * plane.1 - vec3!(ray.0)).dot(plane.0) / ray.1.dot(plane.0))
-        .filter(|n| !n.is_nan() && *n >= 0.0)
 }
 
 fn proj_onto_plane(v: Vec3, n_normalized: Vec3) -> Vec3 {
@@ -1063,7 +1000,7 @@ fn make_line_strip_capsule(
     let required_capacity = 16 * quater_segments + 8;
     let mut points = Vec::with_capacity(required_capacity);
 
-    let z = (capsule.line.1 - capsule.line.0).normalize();
+    let z = (capsule.segment.tail - capsule.segment.head).normalize();
     let (x, y) = axes.unwrap_or_else(|| {
         let x = get_perpendicular(z).normalize();
         let y = z.cross(x);
@@ -1071,14 +1008,14 @@ fn make_line_strip_capsule(
     });
 
     let (x, y, z) = (x*capsule.radius, y*capsule.radius, z*capsule.radius);
-    points.extend(make_arc_points(capsule.line.1, TAU/4.0,  z, x,   quater_segments));
-    points.extend(make_arc_points(capsule.line.1, TAU,      x, y, 4*quater_segments));
-    points.extend(make_arc_points(capsule.line.0, TAU,      x, y, 4*quater_segments));
-    points.extend(make_arc_points(capsule.line.0, TAU/2.0,  x,-z, 2*quater_segments));
-    points.extend(make_arc_points(capsule.line.1, TAU/4.0, -x, z,   quater_segments));
-    points.extend(make_arc_points(capsule.line.1, TAU/4.0,  z, y,   quater_segments));
-    points.extend(make_arc_points(capsule.line.0, TAU/2.0,  y,-z, 2*quater_segments));
-    points.extend(make_arc_points(capsule.line.1, TAU/4.0, -y, z,   quater_segments));
+    points.extend(make_arc_points(capsule.segment.tail, TAU/4.0,  z, x,   quater_segments));
+    points.extend(make_arc_points(capsule.segment.tail, TAU,      x, y, 4*quater_segments));
+    points.extend(make_arc_points(capsule.segment.head, TAU,      x, y, 4*quater_segments));
+    points.extend(make_arc_points(capsule.segment.head, TAU/2.0,  x,-z, 2*quater_segments));
+    points.extend(make_arc_points(capsule.segment.tail, TAU/4.0, -x, z,   quater_segments));
+    points.extend(make_arc_points(capsule.segment.tail, TAU/4.0,  z, y,   quater_segments));
+    points.extend(make_arc_points(capsule.segment.head, TAU/2.0,  y,-z, 2*quater_segments));
+    points.extend(make_arc_points(capsule.segment.tail, TAU/4.0, -y, z,   quater_segments));
 
     assert_eq!(
         points.len(), required_capacity,
@@ -1093,7 +1030,7 @@ fn make_line_strip_capsule_billboard(
     let required_capacity = 12 * quater_segments + 5;
     let mut points = Vec::with_capacity(required_capacity);
 
-    let z = (capsule.line.1 - capsule.line.0).normalize();
+    let z = (capsule.segment.tail - capsule.segment.head).normalize();
     let x = {
         let x = z.cross(normal);
         if x == vec3!(0.0, 0.0, 0.0) {
@@ -1101,19 +1038,19 @@ fn make_line_strip_capsule_billboard(
             let x = get_perpendicular(z).normalize_to(capsule.radius);
             let y = z.cross(x);
 
-            points.extend(make_arc_points(capsule.line.0, TAU, x, y, 4*quater_segments));
-            points.extend(make_arc_points(capsule.line.1, TAU, x, y, 4*quater_segments));
+            points.extend(make_arc_points(capsule.segment.head, TAU, x, y, 4*quater_segments));
+            points.extend(make_arc_points(capsule.segment.tail, TAU, x, y, 4*quater_segments));
             return points;
         } else { x.normalize() }
     };
     let y = z.cross(x);
 
     let (x, y, z) = (x*capsule.radius, y*capsule.radius, z*capsule.radius);
-    points.extend(make_arc_points(capsule.line.1, TAU/2.0,  x, z, 2*quater_segments));
-    points.extend(make_arc_points(capsule.line.1, TAU,     -x, y, 4*quater_segments));
-    points.extend(make_arc_points(capsule.line.0, TAU,     -x, y, 4*quater_segments));
-    points.extend(make_arc_points(capsule.line.0, TAU/2.0, -x,-z, 2*quater_segments));
-    points.push(capsule.line.1 + x);
+    points.extend(make_arc_points(capsule.segment.tail, TAU/2.0,  x, z, 2*quater_segments));
+    points.extend(make_arc_points(capsule.segment.tail, TAU,     -x, y, 4*quater_segments));
+    points.extend(make_arc_points(capsule.segment.head, TAU,     -x, y, 4*quater_segments));
+    points.extend(make_arc_points(capsule.segment.head, TAU/2.0, -x,-z, 2*quater_segments));
+    points.push(capsule.segment.tail + x);
 
     assert_eq!(
         points.len(), required_capacity,

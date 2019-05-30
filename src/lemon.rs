@@ -52,6 +52,15 @@ impl Lemon {
     }
 
     #[inline]
+    pub fn get_focus(&self) -> Disc {
+        Disc {
+            centre: self.phys.position,
+            normal: self.get_vertical(),
+            radius: self.focal_radius()
+        }
+    }
+
+    #[inline]
     pub fn get_transform_with_scale(&self) -> Mat4 {
         self.phys.get_transform() * Mat4::from_scale(self.scale)
     }
@@ -60,7 +69,7 @@ impl Lemon {
     pub fn get_bounding_capsule(&self) -> Capsule {
         let half = (self.scale - self.sagitta) * self.get_vertical();
         Capsule {
-            line: (self.phys.position - half, self.phys.position + half),
+            segment: Segment::new(self.phys.position - half, self.phys.position + half),
             radius: self.sagitta,
         }
     }
@@ -364,12 +373,13 @@ pub fn get_collision_lemon(
     other: &Lemon,
     mut debug: Option<&mut DebugRender>,
 ) -> Option<Collision> {
-    let lemon_vertical = lemon.get_vertical();
-    let lemon_focus    = (lemon.phys.position, lemon_vertical, lemon.focal_radius());
+    let lemon_focus    = lemon.get_focus();
+    let lemon_vertical = lemon_focus.normal;
 
-    let other_vertical = other.get_vertical();
-    let other_focus    = (other.phys.position, other_vertical, other.focal_radius());
+    let other_focus    = other.get_focus();
+    let other_vertical = other_focus.normal;
 
+    let combined_radii2 = (lemon.radius + other.radius).powi(2);
     // find furthest points on focii for general case collision test
     let (lemon_sphere, other_sphere, displacement, distance2) = {
         // TODO: special case for when displacement parallel to single vertical
@@ -412,36 +422,15 @@ pub fn get_collision_lemon(
             // based on algorithm described here:
             // https://www.sciencedirect.com/science/article/pii/S0307904X0200080X
             // it also cites a result stating the following has no closed-form solution
-            const MAX_ITERATIONS: usize = 50;
-            const EPSILON: f32 = 0.0000;
-
-            let mut lemon_sphere = furthest_on_circle_from_point(
-                lemon_focus, other.phys.position,
-            );
-            let mut other_sphere = furthest_on_circle_from_point(
-                other_focus, lemon.phys.position,
-            );
-            let mut displacement = other_sphere - lemon_sphere;
-            let mut distance2    = displacement.magnitude2();
-
-            let mut iterations = 0;
-            loop {
-                let distance2_prev = distance2;
-                iterations  += 1;
-                lemon_sphere = furthest_on_circle_from_point(lemon_focus, other_sphere);
-                other_sphere = furthest_on_circle_from_point(other_focus, lemon_sphere);
-                displacement = other_sphere - lemon_sphere;
-                distance2    = displacement.magnitude2();
-
-                let epsilon = distance2 - distance2_prev;
-                if epsilon <= EPSILON {
-                    break;
-                }
-                if iterations >= MAX_ITERATIONS {
-                    // indicate error to better profile this edge case
-                    break;
-                }
-            }
+            let (lemon_sphere, other_sphere, distance2, (epsilon, _)) = {
+                find_furthest_and_distance2_on_circles(
+                    lemon_focus, other_focus,
+                    // cap at combined_radii distance: see early-out in resolve_collision
+                    // TODO: seed algorithm with previous frame's result
+                    None, 0.0, (lemon.radius + other.radius).powi(2), 25,
+                )
+            };
+            let displacement = other_sphere - lemon_sphere;
             (lemon_sphere, other_sphere, displacement, distance2)
         }
     };
@@ -453,12 +442,10 @@ pub fn get_collision_lemon(
     }
     use CollisionTest::{Sphere, Vertex};
 
-    // TODO: replace multiple per-lemon arguments with a struct?
-    type Circle = (Point3, Vec3, f32); // for furthest_on_circle_from_point function
-    #[inline]
-    fn resolve_collision_test(
-        lemon: &Lemon, lemon_focus: Circle, lemon_vertical: Vec3, lemon_test: CollisionTest,
-        other: &Lemon, other_focus: Circle, other_vertical: Vec3, other_test: CollisionTest,
+    #[inline(always)]
+    fn resolve_collision(
+        lemon: &Lemon, lemon_focus: Disc, lemon_vertical: Vec3, lemon_test: CollisionTest,
+        other: &Lemon, other_focus: Disc, other_vertical: Vec3, other_test: CollisionTest,
         displacement: Vec3, distance2: f32,
         mut debug: Option<&mut DebugRender>,
     ) -> Option<Collision> { match (lemon_test, other_test) {
@@ -468,12 +455,6 @@ pub fn get_collision_lemon(
             // also handles vertex-vertex collision
             if let Some(ref mut debug) = debug {
                 let color = color!(0x708090FF).truncate();
-                debug.draw_line(&color, 1, &[
-                    lemon.phys.position + lemon_vertical * lemon.scale, lemon_sphere,
-                    lemon.phys.position - lemon_vertical * lemon.scale, lemon_sphere,
-                    other_sphere, other.phys.position + other_vertical * other.scale,
-                    other_sphere, other.phys.position - other_vertical * other.scale,
-                ]);
                 debug.draw_line(&color, 1, &make_line_strip_circle(
                     lemon_sphere, lemon_vertical.cross(displacement).normalize(),
                     lemon.radius, 63,
@@ -482,6 +463,16 @@ pub fn get_collision_lemon(
                     other_sphere, other_vertical.cross(displacement).normalize(),
                     other.radius, 63,
                 ));
+                debug.draw_line(&color, 1, &[
+                    lemon.phys.position + lemon_vertical * lemon.scale, lemon_sphere,
+                    lemon.phys.position - lemon_vertical * lemon.scale, lemon_sphere,
+                    other_sphere, other.phys.position + other_vertical * other.scale,
+                    other_sphere, other.phys.position - other_vertical * other.scale,
+                ]);
+            }
+            // early out: lemons too far to possibly collide
+            if distance2 > (lemon.radius + other.radius).powi(2) {
+                return None;
             }
 
             // test edge cases
@@ -494,7 +485,7 @@ pub fn get_collision_lemon(
                 let displacement = other_vertex - lemon_vertex;
                 let distance2    = displacement.magnitude2();
 
-                resolve_collision_test(
+                resolve_collision(
                     lemon, lemon_focus, lemon_vertical, Vertex(lemon_vertex),
                     other, other_focus, other_vertical, Vertex(other_vertex),
                     displacement, distance2,
@@ -506,7 +497,7 @@ pub fn get_collision_lemon(
                 let displacement = other_sphere - lemon_vertex;
                 let distance2    = displacement.magnitude2();
 
-                resolve_collision_test(
+                resolve_collision(
                     lemon, lemon_focus, lemon_vertical, Vertex(lemon_vertex),
                     other, other_focus, other_vertical, Sphere(other_sphere),
                     displacement, distance2,
@@ -518,20 +509,18 @@ pub fn get_collision_lemon(
                 let displacement = other_vertex - lemon_sphere;
                 let distance2    = displacement.magnitude2();
 
-                resolve_collision_test(
+                resolve_collision(
                     lemon, lemon_focus, lemon_vertical, Sphere(lemon_sphere),
                     other, other_focus, other_vertical, Vertex(other_vertex),
                     displacement, distance2,
                     debug,
                 )
             } else {
-                some_if_then(distance2 <= (lemon.radius + other.radius).powi(2), || {
-                    let radii = lemon.radius + other.radius;
-                    Collision {
-                        point:  lemon_sphere + displacement * lemon.radius / radii,
-                        normal: displacement.normalize().neg(),
-                        depth:  radii - distance2.sqrt(),
-                    }
+                let combined_radii = lemon.radius + other.radius;
+                Some(Collision {
+                    point:  lemon_sphere + displacement * lemon.radius / combined_radii,
+                    normal: displacement.normalize().neg(),
+                    depth:  combined_radii - distance2.sqrt(),
                 })
             }
         },
@@ -555,7 +544,7 @@ pub fn get_collision_lemon(
                 let displacement = other_vertex - lemon_vertex;
                 let distance2    = displacement.magnitude2();
 
-                resolve_collision_test(
+                resolve_collision(
                     lemon, lemon_focus, lemon_vertical, Vertex(lemon_vertex),
                     other, other_focus, other_vertical, Vertex(other_vertex),
                     displacement.neg(), distance2,
@@ -576,7 +565,7 @@ pub fn get_collision_lemon(
 
         (Vertex(lemon_vertex), Sphere(other_sphere)) => {
             // same as previous case, but reverse order and negate result
-            resolve_collision_test(
+            resolve_collision(
                 other, other_focus, other_vertical, Sphere(other_sphere),
                 lemon, lemon_focus, lemon_vertical, Vertex(lemon_vertex),
                 displacement.neg(), distance2,
@@ -598,7 +587,7 @@ pub fn get_collision_lemon(
 
     let lemon_vertical_signed = lemon_vertical * lemon_vertical.dot(displacement).signum();
     let other_vertical_signed = other_vertical *-other_vertical.dot(displacement).signum();
-    resolve_collision_test(
+    resolve_collision(
         &lemon, lemon_focus, lemon_vertical_signed, Sphere(lemon_sphere),
         &other, other_focus, other_vertical_signed, Sphere(other_sphere),
         displacement, distance2,
