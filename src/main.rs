@@ -182,7 +182,11 @@ pub const TAU: f32 = PI * 2.0;
 type ElementIndex = u16;
 const ELEMENT_INDEX_TYPE: GLenum = gl::UNSIGNED_SHORT;
 
-const LEMON_COLOR: Vec4 = color!(0xFFF44F_FF);
+const LEMON_COLORS: &[Vec4] = &[
+    color!(0xFFF44F_FF), // bright yellow
+    color!(0xFFFE6B_FF), // pale yellow
+    color!(0xFFE74D_FF), // warm yellow
+];
 const BACK_COLOR:  Vec4 = color!(0xA2EFEF_00);
 
 const LEMON_TEX_SIZE: usize = 1;
@@ -269,7 +273,7 @@ fn main() {
         (camera, camera_ubo, camera_binding_index)
     };
 
-    let (vao, base_mesh, vbo_transform, vbo_lemon_s) = unsafe {
+    let (vao, base_mesh, vbo_transform, vbo_lemon_s, vbo_lemon_color) = unsafe {
         let program = gl::link_shaders(&[
             gl::compile_shader(include_str!("shader/lemon.vert.glsl"), gl::VERTEX_SHADER),
             gl::compile_shader(include_str!("shader/lemon.frag.glsl"), gl::FRAGMENT_SHADER),
@@ -278,9 +282,6 @@ fn main() {
 
         let camera_index = gl::GetUniformBlockIndex(program, cstr!("Camera"));
         gl::UniformBlockBinding(program, camera_index, camera_binding_index);
-
-        let u_lemon_color = gl::GetUniformLocation(program, cstr!("u_lemon_color"));
-        gl::Uniform4fv(u_lemon_color, 1, as_ptr(&LEMON_COLOR));
 
         let u_ambient_color = gl::GetUniformLocation(program, cstr!("u_ambient_color"));
         gl::Uniform4fv(u_ambient_color, 1, as_ptr(&BACK_COLOR));
@@ -354,6 +355,14 @@ fn main() {
         gl::VertexAttribPointer(a_lemon_s, 1, gl::FLOAT, gl::FALSE, 0, 0 as *const GLvoid);
         gl::VertexAttribDivisor(a_lemon_s, 1);
 
+        let a_lemon_color   = gl::GetAttribLocation(program, cstr!("a_lemon_color")) as GLuint;
+        let vbo_lemon_color = gl::gen_object(gl::GenBuffers);
+        gl::BindBuffer(gl::ARRAY_BUFFER, vbo_lemon_color);
+        gl::buffer_init::<Vec3>(gl::ARRAY_BUFFER, MAX_BODIES, gl::DYNAMIC_DRAW);
+        gl::EnableVertexAttribArray(a_lemon_color);
+        gl::VertexAttribPointer(a_lemon_color, 3, gl::FLOAT, gl::FALSE, 0, 0 as *const GLvoid);
+        gl::VertexAttribDivisor(a_lemon_color, 1);
+
         // PER-VERTEX ATTRIBUTES
         let a_position   = gl::GetAttribLocation(program, cstr!("a_position")) as GLuint;
         let vbo_position = gl::gen_object(gl::GenBuffers);
@@ -366,22 +375,33 @@ fn main() {
         gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, ebo);
         gl::buffer_data(gl::ELEMENT_ARRAY_BUFFER, &base_mesh.indices, gl::STATIC_DRAW);
 
-        (vao, base_mesh, vbo_transform, vbo_lemon_s)
+        (vao, base_mesh, vbo_transform, vbo_lemon_s, vbo_lemon_color)
     };
 
     let mut lemons = Vec::with_capacity(MAX_BODIES);
-    fn spawn_lemon(lemons: &mut Vec<Lemon>, vbo_lemon_s: GLuint) {
+    fn spawn_lemon(lemons: &mut Vec<Lemon>, vbo_lemon_s: GLuint, vbo_lemon_color: GLuint) {
         if lemons.len() >= MAX_BODIES { return; }
 
         let scale = LEMON_SCALE_MIN + (LEMON_SCALE_MAX-LEMON_SCALE_MIN) * random::<f32>();
         let s     = LEMON_S_MIN + (LEMON_S_MAX-LEMON_S_MIN) * random::<f32>();
-        let mut new_lemon = Lemon::new(s, scale);
+
+        let color_index = random::<f32>().powi(2) * LEMON_COLORS.len() as f32;
+        let color       = LEMON_COLORS[color_index.floor() as usize].truncate();
+
+        let mut new_lemon = Lemon::new(s, scale, color);
         unsafe {
             gl::BindBuffer(gl::ARRAY_BUFFER, vbo_lemon_s);
             gl::buffer_sub_data(
                 gl::ARRAY_BUFFER,
                 lemons.len(),
                 slice::from_ref(&s),
+            );
+
+            gl::BindBuffer(gl::ARRAY_BUFFER, vbo_lemon_color);
+            gl::buffer_sub_data(
+                gl::ARRAY_BUFFER,
+                lemons.len(),
+                slice::from_ref(&color),
             );
         }
 
@@ -400,7 +420,7 @@ fn main() {
     }
     macro_rules! current_lemon       { () => { lemons.last_mut().unwrap() } }
     macro_rules! current_lemon_index { () => { lemons.len() - 1 } }
-    spawn_lemon(&mut lemons, vbo_lemon_s);
+    spawn_lemon(&mut lemons, vbo_lemon_s, vbo_lemon_color);
 
     let mut debug            = DebugRender::new();
     let mut debug_depth_test = DebugRender::with_shared_context(&debug);
@@ -455,6 +475,7 @@ fn main() {
     let mut camera_target    = vec3!(0.0, 0.0, 0.0);
 
     let mut mouse_pos: Vec2 = vec2!();
+    let mut mouse_ray: Ray  = 
     let mut mouse_drag: Option<Vec2> = Some(vec2!());
     let mut mouse_down = false;
 
@@ -579,8 +600,11 @@ fn main() {
                         debug_spin_between_frames = modifiers.ctrl;
                     },
                     VirtualKeyCode::Space => if let ElementState::Pressed = state {
-                        if modifiers.ctrl { spawn_lemon(&mut lemons, vbo_lemon_s); }
-                        else              { reset_lemon(&mut current_lemon!()); }
+                        if modifiers.ctrl {
+                            spawn_lemon(&mut lemons, vbo_lemon_s, vbo_lemon_color);
+                        } else {
+                            reset_lemon(&mut current_lemon!());
+                        }
                     },
                     VirtualKeyCode::Escape => if let ElementState::Pressed = state {
                         debug_pause_next_frame = !debug_pause;

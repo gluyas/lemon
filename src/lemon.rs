@@ -11,7 +11,8 @@ pub struct Lemon {
     /// Scale factor of lemon. Corresponds to half the height.
     pub scale:   f32,
 
-    pub phys: Rigidbody,
+    pub color: Vec3,
+    pub phys:  Rigidbody,
 }
 
 impl Lemon {
@@ -19,7 +20,7 @@ impl Lemon {
 // https://www.researchgate.net/publication/2173504
     pub const DENSITY: f32 = 10.0 * KILOGRAM / METER / METER / METER;
 
-    pub fn new(s: f32, scale: f32) -> Self {
+    pub fn new(s: f32, scale: f32, color: Vec3) -> Self {
         if s <= 0.0 || scale <= 0.0 {
             panic!("non-positive lemon size parameter(s)");
         } else if s > 1.0 {
@@ -34,11 +35,7 @@ impl Lemon {
         phys.mass            = scale.powi(3) * Lemon::DENSITY * mass;
         phys.inertia_local   = scale.powi(3) * Lemon::DENSITY * vec3!(i_y, i_y, i_z);
 
-        Lemon { radius: r*scale, sagitta: s*scale, scale, phys }
-    }
-
-    pub fn with_sagitta_and_half_height(sagitta: f32, half_height: f32) -> Self {
-        Lemon::new(sagitta / half_height, half_height)
+        Lemon { radius: r*scale, sagitta: s*scale, scale, color, phys }
     }
 
     #[inline]
@@ -86,7 +83,7 @@ impl Lemon {
         let old_phys = self.phys;
         let old_angular_velocity = self.phys.get_inertia_inverse()
                                  * self.phys.angular_momentum;
-        *self = Lemon::new(s, scale);
+        *self = Lemon::new(s, scale, self.color);
         self.phys.velocity         = old_phys.velocity;
         self.phys.position         = old_phys.position;
         self.phys.orientation      = old_phys.orientation;

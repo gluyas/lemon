@@ -12,12 +12,15 @@ uniform sampler2D u_radius_normal_z_map;
 // per-mesh
 in mat4  a_transform;
 in float a_lemon_s;
+in vec3  a_lemon_color;
 
 // per-vertex
 in vec3 a_position;
 
 out vec3 v_position;
 out vec3 v_normal;
+
+out vec3 v_color;
 
 //flat out vec3 up;
 
@@ -33,8 +36,11 @@ void main() {
     float normal_z = sample.y;
 
     vec4 world_position = a_transform * vec4(a_position.xy * radius, a_position.z, 1.0);
-    v_position = vec3(world_position);
-    v_normal   = mat3(a_transform) * vec3(a_position.xy, sign(a_position.z) * normal_z);
+
+    v_position  = vec3(world_position);
+    v_normal    = mat3(a_transform) * vec3(a_position.xy, sign(a_position.z) * normal_z);
+
+    v_color     = a_lemon_color;
 
     gl_Position = u_camera.projection * u_camera.view * world_position;
 

@@ -9,13 +9,14 @@ layout(std140) uniform Camera {
 
 uniform sampler2D u_normal_map;
 
-uniform vec4 u_lemon_color;
 uniform vec4 u_ambient_color;
 
 uniform vec3 u_direction_light = vec3(2.5, 0.5, 1.5);
 
 in vec3 v_position;
 in vec3 v_normal;
+
+in vec3 v_color;
 
 //flat in vec3 up;
 
@@ -46,6 +47,5 @@ void main() {
     //gl_FragColor = vec4(v_uv.x, 0.0, v_uv.y, 1.0);
     //gl_FragColor = (vec4(1.0) + normal) / 2.0;
 
-    gl_FragColor = (ambient + lambert) * u_lemon_color + specular * vec4(1.0);
-    gl_FragColor.a = u_lemon_color.a;
+    gl_FragColor   = vec4((ambient + lambert) * v_color + vec3(specular), 1.0);
 }
