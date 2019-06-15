@@ -80,14 +80,17 @@ pub fn integrate_rigidbody_fixed_timestep(rb: &mut Rigidbody) {
     rb.position += rb.velocity + GRAVITY/2.0;
     rb.velocity += GRAVITY;
 
-    let angular_velocity = rb.get_inertia_inverse()  * rb.angular_momentum;
-    rb.orientation += Quat { v: angular_velocity, s: 0.0 } / 2.0 * rb.orientation;
-    rb.orientation  = rb.orientation.normalize();
+    if rb.angular_momentum != VEC3_0 {
+        let angular_velocity = rb.get_inertia_inverse()  * rb.angular_momentum;
+        rb.orientation += Quat { v: angular_velocity, s: 0.0 } / 2.0 * rb.orientation;
+        rb.orientation  = rb.orientation.normalize();
 
-    // this is a hacked in solution to rigidbodies tending to spin for too long.
-    // the friction model at collision time does not affect spinning points.
-    let angular_speed = angular_velocity.magnitude();
-    rb.angular_momentum -= rb.get_inertia() * angular_velocity * ANGULAR_DRAG / angular_speed;
+        // this is a hacked in solution to rigidbodies tending to spin for too long.
+        // the friction model at collision time does not affect spinning points.
+        let angular_speed = angular_velocity.magnitude();
+        rb.angular_momentum -= rb.get_inertia() * angular_velocity 
+                             * ANGULAR_DRAG / angular_speed;
+    }
 }
 
 pub fn resolve_collision_static(
