@@ -161,10 +161,43 @@ pub fn closest_on_segment_to_point(segment: Segment, point: Point3) -> Point3 {
     }
 }
 
-fn closest_on_segments(
+pub fn closest_on_lines(a: Ray, b: Ray) -> (Point3, Point3) {
+    let (a_t, b_t) = closest_on_lines_t(a, b);
+    (a.eval(a_t), b.eval(b_t))
+}
+
+pub fn closest_on_lines_t(
+    Ray { origin: p1, vector: d1 }: Ray,
+    Ray { origin: p2, vector: d2 }: Ray,
+) -> (Real, Real) {
+    // adapted from Real-Time Collision Detection, Christer Ericson
+    let r  = p1 - p2;
+
+    let a = d1.dot(d1);
+    let e = d2.dot(d2);
+    let f = d2.dot(r);
+    let c = d1.dot(r);
+
+    let b = d1.dot(d2);
+    let d = a*e - b*b;
+
+    let s = if d != 0.0 {
+        (b*f - c*e) / d
+    } else { 0.0 };
+    let t = (b*s + f) / e;
+
+    (s, t)
+}
+
+pub fn closest_on_segments(a: Segment, b: Segment) -> (Point3, Point3) {
+    let (a_t, b_t) = closest_on_segments_t(a, b);
+    (a.eval(a_t), b.eval(b_t))
+}
+
+pub fn closest_on_segments_t(
     Segment { head: p1, tail: q1 }: Segment,
     Segment { head: p2, tail: q2 }: Segment,
-) -> (Point3, Point3) {
+) -> (Real, Real) {
     // adapted from Real-Time Collision Detection, Christer Ericson
     let d1 = q1 - p1;
     let d2 = q2 - p2;
@@ -175,7 +208,7 @@ fn closest_on_segments(
     let f = d2.dot(r);
 
     if a == 0.0 && e == 0.0 {
-        return (p1, p2)
+        return (0.0, 0.0)
     }
     let (s, t) = {
         if a == 0.0 {
@@ -193,38 +226,31 @@ fn closest_on_segments(
                 } else { 0.0 };
 
                 let mut t = b*s + f;
-                if e == 0.0 {
-                    (clamp01(-c / a), 0.0)
+                if t < 0.0 {
+                    t = 0.0;
+                    s = clamp01(-c / a);
+                } else if t > e {
+                    t = 1.0;
+                    s = clamp01((b - c) / a);
                 } else {
-                    let b = d1.dot(d2);
-                    let d = a*e - b*b;
-
-                    let mut s = if d != 0.0 {
-                        clamp01((b*f - c*e) / d)
-                    } else { 0.0 };
-
-                    let mut t = b*s + f;
-                    if t < 0.0 {
-                        t = 0.0;
-                        s = clamp01(-c / a);
-                    } else if t > e {
-                        t = 1.0;
-                        s = clamp01((b - c) / a);
-                    } else {
-                        t /= e;
-                    }
-                    (s, t)
+                    t /= e;
                 }
+                (s, t)
             }
         }
     };
-    (p1 + d1* s, p2 + d2*t)
+    (s, t)
 }
 
-pub fn closest_on_segment_and_ray(
-    Segment { head:   p1, tail:   p2 }: Segment,
-    Ray     { origin: q1, vector: d2 }: Ray,
-) -> (Point3, Point3) {
+pub fn closest_on_segment_and_ray(s: Segment, r: Ray) -> (Point3, Point3) {
+    let (s_t, r_t) = closest_on_segment_and_ray_t(s, r);
+    (s.eval(s_t), r.eval(r_t))
+}
+
+pub fn closest_on_segment_and_ray_t(
+    Segment { head:   p1, tail:   q1 }: Segment,
+    Ray     { origin: p2, vector: d2 }: Ray,
+) -> (Real, Real) {
     // adapted from Real-Time Collision Detection, Christer Ericson
     let d1 = q1 - p1;
     let r  = p1 - p2;
@@ -249,7 +275,7 @@ pub fn closest_on_segment_and_ray(
             (s, t)
         }
     };
-    (p1 + s*d1, p2 + t*d2)
+    (s, t)
 }
 
 // Spheres
@@ -397,6 +423,11 @@ pub fn overlap_capsules(a: Capsule, b: Capsule) -> bool {
     (closest_b - closest_a).magnitude2() <= (a.radius + b.radius).powi(2)
 }
 
+pub fn overlap_capsule_ray(c: Capsule, r: Ray) -> bool {
+    let (closest_c, closest_r) = closest_on_segment_and_ray(c.segment, r);
+    (closest_r - closest_c).magnitude2() <= c.radius.powi(2)
+}
+
 pub fn overlap_capsule_sphere(c: Capsule, s: Sphere) -> bool {
     let closest = closest_on_segment_to_point(c.segment, s.centre);
     (closest - s.centre).magnitude2() <= (c.radius + s.radius).powi(2)
@@ -485,8 +516,8 @@ pub fn raycast_sphere(ray: Ray, sphere: Sphere) -> RaycastSolid {
     let m = ray.origin - sphere.centre;
 
     let a = ray.vector.magnitude2();
-    let b = 2.0 * m.dot(ray.vector);
-    let c = m.magnitude2() + sphere.radius.powi(2);
+    let b = m.dot(ray.vector);
+    let c = m.magnitude2() - sphere.radius.powi(2);
 
     let d = b.powi(2) - a*c;
     if d < 0.0 {
@@ -510,8 +541,8 @@ pub fn raycast_sphere_normalized(ray_normalized: Ray, sphere: Sphere) -> Raycast
     let m = ray.origin - sphere.centre;
 
     //  a = 1.0
-    let b = 2.0 * m.dot(ray.vector);
-    let c = m.magnitude2() + sphere.radius.powi(2);
+    let b = m.dot(ray.vector);
+    let c = m.magnitude2() - sphere.radius.powi(2);
 
     let d = b.powi(2) - c;
     if d < 0.0 {
