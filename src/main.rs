@@ -274,7 +274,12 @@ fn main() {
         (camera, camera_ubo, camera_binding_index)
     };
 
-    let (vao, base_mesh, vbo_transform, vbo_lemon_s, vbo_lemon_color) = unsafe {
+    let (
+        vao, base_mesh,
+        vbo_transform, vbo_lemon_s, vbo_lemon_color,
+        u_selection_instance_id, u_selection_glow,
+        u_hover_instance_id, u_hover_glow,
+    ) = unsafe {
         let program = gl::link_shaders(&[
             gl::compile_shader(include_str!("shader/lemon.vert.glsl"), gl::VERTEX_SHADER),
             gl::compile_shader(include_str!("shader/lemon.frag.glsl"), gl::FRAGMENT_SHADER),
@@ -286,6 +291,19 @@ fn main() {
 
         let u_ambient_color = gl::GetUniformLocation(program, cstr!("u_ambient_color"));
         gl::Uniform4fv(u_ambient_color, 1, as_ptr(&BACK_COLOR));
+
+        let u_selection_instance_id = gl::GetUniformLocation(program, cstr!("u_selection_instance_id"));
+        gl::Uniform1i(u_selection_instance_id, !0);
+
+        let u_selection_glow = gl::GetUniformLocation(program, cstr!("u_selection_glow"));
+        gl::Uniform1f(u_selection_glow, 0.0);
+
+        let u_hover_instance_id = gl::GetUniformLocation(program, cstr!("u_hover_instance_id"));
+        gl::Uniform1i(u_hover_instance_id, !0);
+
+        let u_hover_glow = gl::GetUniformLocation(program, cstr!("u_hover_glow"));
+        gl::Uniform1f(u_hover_glow, 0.0);
+
 /*
         let txo_normal_map = gl::gen_object(gl::GenTextures);
         let normal_map = vec![vec3!(); 1024];
@@ -376,7 +394,12 @@ fn main() {
         gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, ebo);
         gl::buffer_data(gl::ELEMENT_ARRAY_BUFFER, &base_mesh.indices, gl::STATIC_DRAW);
 
-        (vao, base_mesh, vbo_transform, vbo_lemon_s, vbo_lemon_color)
+        (
+            vao, base_mesh,
+            vbo_transform, vbo_lemon_s, vbo_lemon_color,
+            u_selection_instance_id, u_selection_glow,
+            u_hover_instance_id, u_hover_glow,
+        )
     };
 
     let mut lemons = Vec::with_capacity(MAX_BODIES);
@@ -389,7 +412,7 @@ fn main() {
         let color_index = random::<f32>().powi(2) * LEMON_COLORS.len() as f32;
         let color       = LEMON_COLORS[color_index.floor() as usize].truncate();
 
-        let mut new_lemon = Lemon::new(s, scale, color);
+        let mut new_lemon = Lemon::new(s, scale);
         unsafe {
             gl::BindBuffer(gl::ARRAY_BUFFER, vbo_lemon_s);
             gl::buffer_sub_data(
@@ -420,10 +443,12 @@ fn main() {
                                     * TAU / 5.0 / SECOND;
     }
     spawn_lemon(&mut lemons, vbo_lemon_s, vbo_lemon_color);
-    let mut selected_lemon_index = 0;
-    let mut hovered_lemon_index = !0;
-    let mut hovered_lemon_depth = INFINITY;
-    macro_rules! selected_lemon { () => { lemons.get_mut(selected_lemon_index) }; }
+    let mut lemon_selection_index:  usize = 0;
+    let mut lemon_selection_anim:   Real  = 0.0;
+    let mut lemon_hover_index:      usize = !0;
+    let mut lemon_hover_prev_index: usize = !0;
+    let mut lemon_hover_depth:      Real  = INFINITY;
+    macro_rules! lemon_selection { () => { lemons.get_mut(lemon_selection_index) }; }
 
     let mut debug            = DebugRender::new();
     let mut debug_depth_test = DebugRender::with_shared_context(&debug);
@@ -504,8 +529,9 @@ fn main() {
         mouse_movement = VEC2_0;
 
         // hover selection
-        hovered_lemon_index = !0;
-        hovered_lemon_depth = INFINITY;
+        lemon_hover_prev_index = lemon_hover_index;
+        lemon_hover_index      = !0;
+        lemon_hover_depth      = INFINITY;
 
         // POLL INPUT
         let mut exit = false;
@@ -552,19 +578,19 @@ fn main() {
                         camera_distance -= camera_distance * delta_y * 0.065;
                         if camera_distance < 0.0 { camera_distance = 0.0; }
                         camera_needs_update = true;
-                    } else if selected_lemon_index < lemons.len() {
+                    } else if lemon_selection_index < lemons.len() {
                         let new_scale = option_if_then(modifiers.ctrl, || {
-                            let new_scale = lemons[selected_lemon_index].scale + delta_y * 0.05;
+                            let new_scale = lemons[lemon_selection_index].scale + delta_y * 0.05;
                             some_if(new_scale >= 0.35 && new_scale <= 2.0, new_scale)
                         });
                         let new_s     = option_if_then(modifiers.alt, || {
-                            let normalized = lemons[selected_lemon_index].get_normalized();
+                            let normalized = lemons[lemon_selection_index].get_normalized();
                             let new_s      = normalized.s + delta_y * 0.01;
                             if new_s >= 0.15 && new_s <= 0.95 {
                                 unsafe {
                                     gl::BindBuffer(gl::ARRAY_BUFFER, vbo_lemon_s);
                                     gl::buffer_sub_data(gl::ARRAY_BUFFER,
-                                        selected_lemon_index, slice::from_ref(&normalized.s)
+                                        lemon_selection_index, slice::from_ref(&normalized.s)
                                     );
                                 }
                                 debug_frame_store_clear!();
@@ -572,7 +598,7 @@ fn main() {
                             } else { None }
                         });
                         if new_scale.is_some() || new_s.is_some() {
-                            let lemon     = &mut lemons[selected_lemon_index];
+                            let lemon     = &mut lemons[lemon_selection_index];
                             let new_scale = new_scale.unwrap_or(lemon.scale);
                             let new_s     = new_s.unwrap_or_else(|| lemon.get_normalized().s);
                             lemon.mutate_shape(new_s, new_scale);
@@ -641,7 +667,7 @@ fn main() {
                         if modifiers.ctrl {
                             spawn_lemon(&mut lemons, vbo_lemon_s, vbo_lemon_color);
                         } else {
-                            lemons.get_mut(selected_lemon_index).map(reset_lemon);
+                            lemons.get_mut(lemon_selection_index).map(reset_lemon);
                         }
                         camera_needs_update = true;
                     },
@@ -702,7 +728,7 @@ fn main() {
 
         // UPDATE CAMERA
         camera_needs_update |= !debug_pause;
-        if camera_needs_update { if let Some(lemon) = lemons.get(selected_lemon_index) {
+        if camera_needs_update { if let Some(lemon) = lemons.get(lemon_selection_index) {
             if mouse_dragging {
                 camera_azimuth   -= (180.0 * mouse_movement.x * ASPECT).to_radians();
 
@@ -742,7 +768,7 @@ fn main() {
             let camera_inverse = (camera.projection * camera.view).invert().unwrap();
             let origin = camera_inverse.transform_point(point3!(mouse_pos.x, mouse_pos.y, 0.0));
             let target = camera_inverse.transform_point(point3!(mouse_pos.x, mouse_pos.y, 1.0));
-            mouse_ray  = Ray::new(origin, (target - origin).normalize()); // normalize? 
+            mouse_ray  = Ray::new(origin, (target - origin).normalize()); // normalize?
         }
 
         debug_histogram.add_bar_segment("input processing, camera update",
@@ -838,13 +864,14 @@ fn main() {
                 }
             }
 
-            // UPDATE HOVER SELECTION
+            // CHECK HOVER SELECTION
             if overlap_capsule_ray(lemon.get_bounding_capsule(), mouse_ray) {
-                let raycast = lemon::raycast(mouse_ray, lemon).fore;
-                if raycast.is_intersection() && raycast.is_non_negative() {
-                    if raycast.t < hovered_lemon_depth {
-                        hovered_lemon_index = lemon_index;
-                        hovered_lemon_depth = raycast.t;
+                let raycast = lemon::raycast(mouse_ray, lemon);
+                if raycast.rear.is_non_negative() && raycast.fore.is_intersection() {
+                    let hit = raycast.fore;
+                    if hit.depth < lemon_hover_depth {
+                        lemon_hover_index = lemon_index;
+                        lemon_hover_depth = hit.depth;
                     }
                 }
             }
@@ -899,10 +926,61 @@ fn main() {
             debug_frame_store.push_copy(&lemons);
         }
 
-        // UPDATE LEMON SELECTION
-        if mouse_clicked {
-            camera_needs_update |= selected_lemon_index != hovered_lemon_index;
-            selected_lemon_index = hovered_lemon_index;
+        // UPDATE LEMON SELECTION AND PULSE EFFECTS
+        // update selection on release
+        if mouse_released {
+            if lemon_hover_index < lemons.len() && lemon_hover_index == lemon_hover_prev_index
+            || mouse_clicked                    && lemon_hover_index == !0
+            {
+                camera_needs_update  |= lemon_selection_index != lemon_hover_index;
+                lemon_selection_index = lemon_hover_index;
+                lemon_selection_anim = 0.0;
+                unsafe {
+                    gl::Uniform1i(u_selection_instance_id, lemon_selection_index as _);
+                }
+                lemon_hover_prev_index = !0; // forces lemon_hover update
+            }
+        }
+        // update hover and pre-click effects
+        if mouse_down {
+            if mouse_pressed {
+                unsafe {
+                    gl::Uniform1i(u_hover_instance_id, lemon_hover_index as _);
+                    gl::Uniform1f(u_hover_glow, 0.6);
+                }
+            } else {
+                // don't produce hover effects if mouse held but moved
+                if lemon_hover_index != lemon_hover_prev_index {
+                    lemon_hover_index = !0;
+                    unsafe {
+                        gl::Uniform1i(u_hover_instance_id, !0);
+                    }
+                }
+            }
+        } else {
+            if lemon_hover_index != lemon_hover_prev_index {
+                unsafe {
+                    gl::Uniform1i(u_hover_instance_id, lemon_hover_index as _);
+                    gl::Uniform1f(u_hover_glow, 0.4);
+                }
+            }
+        }
+
+        // lemon selection animation
+        if lemon_selection_index < lemons.len() {
+            const MAX: Real = 1.4;
+            const MIN: Real = 0.0;
+            const LEN: Real = 0.4;
+
+            let glow = if lemon_selection_anim < LEN {
+                MAX - (MAX-MIN) * (1.0 - (lemon_selection_anim / LEN - 1.0).powi(2)).sqrt()
+            } else {
+                MIN
+            };
+            unsafe {
+                gl::Uniform1f(u_selection_glow, glow);
+            }
+            lemon_selection_anim += FRAME_DELTA_TIME;
         }
 
         debug_histogram.add_bar_segment("rigidbody integration, static collisions",
@@ -926,8 +1004,8 @@ fn main() {
                 let force_collision_test = debug_draw_colliders_lemon
                                         &&!debug_draw_bounding_volumes
                                         && ( lemons_len <= 4
-                                          || ( lemon.phys.position-other.phys.position
-                                             ).magnitude2() <= 9.0 );
+                                           || ( lemon.phys.position-other.phys.position
+                                              ).magnitude2() <= 9.0 );
 
                 let collision = option_if_then(
                     bounding_volume_overlap || force_collision_test,

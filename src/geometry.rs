@@ -437,24 +437,25 @@ pub fn overlap_capsule_sphere(c: Capsule, s: Sphere) -> bool {
 
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
-/// `p` is the point at which the ray intersects
-/// `p` is produced by evaluating the ray for `t`
-/// `t` will be NaN if the ray does not intersect
-/// `t` will be negative if the intersection is behind the ray's origin
+/// `point` is the point at which the ray intersects
+/// `point` is produced by evaluating the ray for `depth`
+/// `depth` is the distance along the ray in terms of the ray vector's length
+/// `depth` will be NaN if the ray does not intersect
+/// `depth` will be negative if the intersection is behind the ray's origin
 pub struct Raycast {
-    pub p: Point3,
-    pub t: Real,
+    pub point: Point3,
+    pub depth: Real,
 }
 
 impl Raycast {
-    pub const NON_INTERSECTION: Self = Raycast { p: point3!(NAN, NAN, NAN), t: NAN };
+    pub const NON_INTERSECTION: Self = Raycast { point: point3!(NAN, NAN, NAN), depth: NAN };
 
     pub fn from_solution(ray: Ray, t: Real) -> Self {
-        Raycast { p: ray.eval(t), t }
+        Raycast { point: ray.eval(t), depth: t }
     }
 
     pub fn is_intersection(&self) -> bool {
-       !self.t.is_nan()
+       !self.depth.is_nan()
     }
 
     pub fn filter_non_intersection(self) -> Option<Self> {
@@ -462,7 +463,7 @@ impl Raycast {
     }
 
     pub fn is_non_negative(&self) -> bool {
-        self.t >= 0.0
+        self.depth >= 0.0
     }
 
     pub fn filter_negative(self) -> Option<Self> {

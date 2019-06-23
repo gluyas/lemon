@@ -17,6 +17,7 @@ in vec3 v_position;
 in vec3 v_normal;
 
 in vec3 v_color;
+flat in float v_ui_glow;
 
 //flat in vec3 up;
 
@@ -42,10 +43,12 @@ void main() {
     float lambert  = pow(clamp((dot(normal, light) + LAMBERT_BLEED) / (LAMBERT_BLEED + 1.0), 0, 1), 1);
     float specular = pow(clamp(-dot(eye, reflection), 0, 1), 8);
 
+    float ui_glow  = v_ui_glow * pow(1.0-dot(eye, normal), 2);
+
     //gl_FragColor = vec4(0.5 * (texture(u_normal_map, v_uv).xyz + vec3(1.0, 1.0, 1.0)), 1.0);
     //gl_FragColor = (vec4(1.0) + texture(u_normal_map, v_uv)) / 2.0;
     //gl_FragColor = vec4(v_uv.x, 0.0, v_uv.y, 1.0);
     //gl_FragColor = (vec4(1.0) + normal) / 2.0;
 
-    gl_FragColor   = vec4((ambient + lambert) * v_color + vec3(specular), 1.0);
+    gl_FragColor   = vec4((ambient + lambert) * v_color + vec3(max(specular, ui_glow)), 1.0);
 }

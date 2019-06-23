@@ -9,10 +9,18 @@ layout(std140) uniform Camera {
 
 uniform sampler2D u_radius_normal_z_map;
 
+uniform int   u_hover_instance_id;
+uniform float u_hover_glow;
+
+uniform int   u_selection_instance_id;
+uniform float u_selection_glow;
+
 // per-mesh
 in mat4  a_transform;
 in float a_lemon_s;
 in vec3  a_lemon_color;
+
+in int   gl_InstanceID;
 
 // per-vertex
 in vec3 a_position;
@@ -21,6 +29,7 @@ out vec3 v_position;
 out vec3 v_normal;
 
 out vec3 v_color;
+flat out float v_ui_glow;
 
 //flat out vec3 up;
 
@@ -29,6 +38,15 @@ out gl_PerVertex {
 };
 
 void main() {
+    // set glow parameter for vertex shader if this instance is selected
+    v_ui_glow = 0.0;
+    if (gl_InstanceID == u_selection_instance_id) {
+        v_ui_glow += u_selection_glow;
+    }
+    if (gl_InstanceID == u_hover_instance_id) {
+        v_ui_glow += u_hover_glow;
+    }
+
     // square here corresponds to sqrt in make_radius_normal_z_map. this gives better accuracy
     // for z values closer to +/-1, where the derivative is highest.
     vec2  sample   = texture(u_radius_normal_z_map, vec2(pow(a_position.z, 2), a_lemon_s)).xy;

@@ -11,7 +11,6 @@ pub struct Lemon {
     /// Scale factor of lemon. Corresponds to half the height.
     pub scale:   Real,
 
-    pub color: Vec3,
     pub phys:  Rigidbody,
 }
 
@@ -20,7 +19,7 @@ impl Lemon {
 // https://www.researchgate.net/publication/2173504
     pub const DENSITY: Real = 10.0 * KILOGRAM / METER / METER / METER;
 
-    pub fn new(s: Real, scale: Real, color: Vec3) -> Self {
+    pub fn new(s: Real, scale: Real) -> Self {
         if s <= 0.0 || scale <= 0.0 {
             panic!("non-positive lemon size parameter(s)");
         } else if s > 1.0 {
@@ -35,7 +34,7 @@ impl Lemon {
         phys.mass            = scale.powi(3) * Lemon::DENSITY * mass;
         phys.inertia_local   = scale.powi(3) * Lemon::DENSITY * vec3!(i_y, i_y, i_z);
 
-        Lemon { radius: r*scale, sagitta: s*scale, scale, color, phys }
+        Lemon { radius: r*scale, sagitta: s*scale, scale, phys }
     }
 
     #[inline]
@@ -83,7 +82,7 @@ impl Lemon {
         let old_phys = self.phys;
         let old_angular_velocity = self.phys.get_inertia_inverse()
                                  * self.phys.angular_momentum;
-        *self = Lemon::new(s, scale, self.color);
+        *self = Lemon::new(s, scale);
         self.phys.velocity         = old_phys.velocity;
         self.phys.position         = old_phys.position;
         self.phys.orientation      = old_phys.orientation;
@@ -754,7 +753,7 @@ let mut roots = (0.0, 0.0, 0.0, 0.0);
                     return NAN;
                 }
                 trend = gradient;
-                
+
                 x -= value / gradient;
                 if x.abs() > lemon.scale {
                     return NAN;
