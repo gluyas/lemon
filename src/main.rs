@@ -448,7 +448,10 @@ fn main() {
     let mut lemon_hover_index:      usize = !0;
     let mut lemon_hover_prev_index: usize = !0;
     let mut lemon_hover_depth:      Real  = INFINITY;
-    macro_rules! lemon_selection { () => { lemons.get_mut(lemon_selection_index) }; }
+    let mut lemon_hover_needs_update      = true;
+    let mut lemon_interact_index:   usize = 0;
+    let mut lemon_drag_offset:      Vec3  = VEC3_0;
+    let mut lemon_drag_plane:       Plane = Plane::new(VEC3_0, 0.0);
 
     let mut debug            = DebugRender::new();
     let mut debug_depth_test = DebugRender::with_shared_context(&debug);
@@ -500,7 +503,10 @@ fn main() {
     let mut camera_distance     = 9.0_f32;
     let mut camera_elevation    = 0.0_f32.to_radians();
     let mut camera_azimuth      = 0.0_f32.to_radians();
-    let mut camera_target       = vec3!(0.0, 0.0, 0.0);
+    let mut camera_direction    = VEC3_0;
+    let mut camera_target       = point3!(VEC3_0);
+    let mut camera_lerp         = NAN;
+    let mut camera_lerp_origin  = point3!(VEC3_0);
     let mut camera_needs_update = true;
 
     let mut mouse_pixel    = point2!(VEC2_0);
@@ -516,6 +522,11 @@ fn main() {
     let mut mouse_ray              = Ray::new(point3!(), vec3!());
     let mut mouse_ray_needs_update = true;
 
+    macro_rules! dragging_lemon { ($lemon_index: expr) => {
+        mouse_dragging && $lemon_index == lemon_hover_index
+                       && $lemon_index == lemon_interact_index
+    }; }
+
     let mut window_in_focus = false;
     'main: loop {
         let frame_start_time = Instant::now();
@@ -527,11 +538,6 @@ fn main() {
         mouse_released = false;
         mouse_clicked  = false;
         mouse_movement = VEC2_0;
-
-        // hover selection
-        lemon_hover_prev_index = lemon_hover_index;
-        lemon_hover_index      = !0;
-        lemon_hover_depth      = INFINITY;
 
         // POLL INPUT
         let mut exit = false;
@@ -560,16 +566,22 @@ fn main() {
                     }
                 },
                 WindowEvent::CursorMoved { position: pos, .. } => {
-                    mouse_pixel  = point2!(pos.x as f32, pos.y as f32);
-                    let mouse_pos_new = Point2::new(
-                        (mouse_pixel.x * 2.0) as f32 / WIDTH  as f32 - 1.0,
-                        (mouse_pixel.y *-2.0) as f32 / HEIGHT as f32 + 1.0,
-                    );
-                    mouse_movement         = mouse_pos_new - mouse_pos;
-                    mouse_pos              = mouse_pos_new;
-                    mouse_dragging        |= mouse_down && !mouse_pressed;
-                    mouse_ray_needs_update = true;
-                    camera_needs_update   |= mouse_dragging;
+                    let mouse_pixel_new      = point2!(pos.x as f32, pos.y as f32);
+                    let mouse_pixel_movement = mouse_pixel_new - mouse_pixel;
+                    mouse_pixel              = mouse_pixel_new;
+
+                    if mouse_pixel_movement.x != 0.0 || mouse_pixel_movement.y != 0.0 {
+                        let mouse_pos_new = Point2::new(
+                            (mouse_pixel.x * 2.0) as f32 / WIDTH  as f32 - 1.0,
+                            (mouse_pixel.y *-2.0) as f32 / HEIGHT as f32 + 1.0,
+                        );
+                        mouse_movement         = mouse_pos_new - mouse_pos;
+                        mouse_pos              = mouse_pos_new;
+
+                        mouse_dragging        |= mouse_down && !mouse_pressed;
+                        camera_needs_update   |= mouse_dragging;
+                        mouse_ray_needs_update = true;
+                    }
                 },
                 WindowEvent::MouseWheel {
                     delta: MouseScrollDelta::LineDelta(_delta_x, delta_y), modifiers, ..
@@ -728,8 +740,9 @@ fn main() {
 
         // UPDATE CAMERA
         camera_needs_update |= !debug_pause;
-        if camera_needs_update { if let Some(lemon) = lemons.get(lemon_selection_index) {
-            if mouse_dragging {
+        camera_needs_update |= !camera_lerp.is_nan();
+        if camera_needs_update {
+            if dragging_lemon!(!0) {
                 camera_azimuth   -= (180.0 * mouse_movement.x * ASPECT).to_radians();
 
                 camera_elevation -= (180.0 * mouse_movement.y).to_radians();
@@ -737,19 +750,41 @@ fn main() {
                 camera_elevation  = camera_elevation.max(-85.0_f32.to_radians());
             }
 
-            let camera_dir =
+            camera_direction =
                 ( Quat::from_angle_z(Rad(camera_azimuth))
                 * Quat::from_angle_x(Rad(-camera_elevation))
                 ).rotate_vector(vec3!(0.0, 1.0, 0.0));
 
-            let camera_focus  = point3!(
-                vec3!(lemon.phys.position).mul_element_wise(vec3!(1.0, 1.0, 0.5)) + 0.5*VEC3_Z
-            );
-            camera.position   = camera_focus - camera_dir * camera_distance;
+            if lemon_selection_index < lemons.len() && !dragging_lemon!(lemon_selection_index) {
+                // don't chase selected lemon while being dragged
+                let lemon = &lemons[lemon_selection_index];
+                camera_target = Point3 {
+                    x: lemon.phys.position.x,
+                    y: lemon.phys.position.y,
+                    z: lemon.phys.position.z * 0.5 + 0.5,
+                };
+            }
+
+            let camera_target = if !camera_lerp.is_nan() {
+                // shadow camera_target during camera transition
+                if camera_lerp < 1.0 {
+                    let offset         = (1.0 - (camera_lerp - 1.0).powi(2)).sqrt()
+                                       * (camera_target - camera_lerp_origin);
+                    camera_lerp       += FRAME_DELTA_TIME / 0.3;
+                    camera_lerp_origin + offset
+                } else {
+                    camera_lerp = NAN;
+                    camera_target
+                }
+            } else {
+                camera_lerp_origin = camera_target;
+                camera_target
+            };
+            camera.position   = camera_target - camera_direction * camera_distance;
             camera.projection = perspective(Rad(camera_fovy), ASPECT, 0.1, 1000.0);
-            camera.view = Mat4::look_at(
+            camera.view       = Mat4::look_at(
                 camera.position,
-                camera_focus + camera_dir,
+                camera_target + camera_direction,
                 VEC3_Z,
             );
 
@@ -761,7 +796,7 @@ fn main() {
             }
             mouse_ray_needs_update = true;
             camera_needs_update    = false;
-        } }
+        }
 
         // UPDATE MOUSE RAY
         if mouse_ray_needs_update {
@@ -774,6 +809,31 @@ fn main() {
         debug_histogram.add_bar_segment("input processing, camera update",
             short_color(31, 31, 31, true), get_histogram_bar_height(frame_start_time.elapsed()),
         );
+
+        // MOUSE DRAG LEMONS (LEMON INTERACTION part 1 / 2)
+        if lemon_interact_index < lemons.len() && dragging_lemon!(lemon_interact_index) {
+            // set position and velocity
+            let lemon    = &mut lemons[lemon_interact_index];
+            let drag_pos = raycast_plane_double_sided(mouse_ray, lemon_drag_plane).point
+                         + lemon_drag_offset;
+
+            lemon.phys.velocity         = drag_pos - lemon.phys.position;
+            lemon.phys.position         = drag_pos;
+            lemon.phys.angular_momentum = VEC3_0;
+
+            if lemon_interact_index == lemon_selection_index {
+                // induce camera transition after lemon released
+                camera_lerp = 0.0;
+            }
+        }
+        // reset lemon_hover state
+        lemon_hover_prev_index    = lemon_hover_index;
+        // ensure lemon_hover is buffered on the frame the mouse is released
+        lemon_hover_needs_update |= mouse_released;
+        if lemon_hover_needs_update {
+            lemon_hover_index     = !0;
+            lemon_hover_depth     = INFINITY;
+        }
 
         // TIMESTEP INTEGRATION AND FIXED-OBJECT COLLISIONS
         for (lemon_index, lemon) in lemons.iter_mut().enumerate() {
@@ -810,7 +870,7 @@ fn main() {
             }
 
             // INTEGRATE RIGIDBODIES
-            if !debug_pause {
+            if !debug_pause && !dragging_lemon!(lemon_index) {
                 phys::integrate_rigidbody_fixed_timestep(&mut lemon.phys);
             }
 
@@ -864,8 +924,10 @@ fn main() {
                 }
             }
 
-            // CHECK HOVER SELECTION
-            if overlap_capsule_ray(lemon.get_bounding_capsule(), mouse_ray) {
+            // UPDATE HOVER SELECTION
+            if lemon_hover_needs_update && overlap_capsule_ray(
+                lemon.get_bounding_capsule(), mouse_ray
+            ) {
                 let raycast = lemon::raycast(mouse_ray, lemon);
                 if raycast.rear.is_non_negative() && raycast.fore.is_intersection() {
                     let hit = raycast.fore;
@@ -926,31 +988,56 @@ fn main() {
             debug_frame_store.push_copy(&lemons);
         }
 
-        // UPDATE LEMON SELECTION AND PULSE EFFECTS
-        // update selection on release
+        // UPDATE LEMON SELECTION AND PULSE EFFECTS (LEMON INTERACTION part 2 / 2)
+        if mouse_pressed {
+            // set candidate for dragging or selection
+            unsafe {
+                gl::Uniform1i(u_hover_instance_id, lemon_hover_index as _);
+                gl::Uniform1f(u_hover_glow, 0.6);
+            }
+            lemon_interact_index     = lemon_hover_index;
+            lemon_hover_needs_update = false;
+        }
         if mouse_released {
-            if lemon_hover_index < lemons.len() && lemon_hover_index == lemon_hover_prev_index
-            || mouse_clicked                    && lemon_hover_index == !0
-            {
-                camera_needs_update  |= lemon_selection_index != lemon_hover_index;
-                lemon_selection_index = lemon_hover_index;
+            if mouse_clicked && lemon_interact_index == lemon_hover_index {
+                if lemon_selection_index == !0 && lemon_interact_index == !0 {
+                    // move camera focus if already in free look mode
+                    let raycast_floor = raycast_plane_double_sided(
+                        mouse_ray, Plane::new(VEC3_Z, 0.0),
+                    );
+                    if raycast_floor.is_intersection() && raycast_floor.is_non_negative() {
+                        // LAG: camera unable to update until next frame
+                        camera_target.x     = raycast_floor.point.x;
+                        camera_target.y     = raycast_floor.point.y;
+                        camera_lerp         = 0.0;
+                        camera_needs_update = true;
+                    }
+                } else {
+                    lemon_selection_index = lemon_interact_index;
+                    camera_lerp           = 0.0;
+                    camera_needs_update   = true;
+                }
                 lemon_selection_anim = 0.0;
                 unsafe {
                     gl::Uniform1i(u_selection_instance_id, lemon_selection_index as _);
                 }
-                lemon_hover_prev_index = !0; // forces lemon_hover update
             }
+            lemon_hover_needs_update = true;
         }
-        // update hover and pre-click effects
         if mouse_down {
-            if mouse_pressed {
-                unsafe {
-                    gl::Uniform1i(u_hover_instance_id, lemon_hover_index as _);
-                    gl::Uniform1f(u_hover_glow, 0.6);
-                }
-            } else {
-                // don't produce hover effects if mouse held but moved
-                if lemon_hover_index != lemon_hover_prev_index {
+             if !mouse_dragging && lemon_hover_index < lemons.len() {
+                // test lemon still under cursor (ignoring occlusion)
+                let lemon   = &lemons[lemon_hover_index];
+                let raycast = lemon::raycast(mouse_ray, lemon);
+                if raycast.rear.is_non_negative() && raycast.fore.is_intersection() {
+                    // set axes lemon is dragged along
+                    // TODO: do this once (before loop) on first frame of drag only
+                    lemon_drag_offset = lemon.phys.position - raycast.fore.point;
+                    lemon_drag_plane  = Plane::from_point_and_normal(
+                        raycast.fore.point, -camera_direction,
+                    );
+                } else {
+                    // cancel hover
                     lemon_hover_index = !0;
                     unsafe {
                         gl::Uniform1i(u_hover_instance_id, !0);
@@ -958,7 +1045,8 @@ fn main() {
                 }
             }
         } else {
-            if lemon_hover_index != lemon_hover_prev_index {
+            // no mouse button input: set highlight to lemon under cursor
+            if lemon_hover_index != lemon_hover_prev_index || mouse_released {
                 unsafe {
                     gl::Uniform1i(u_hover_instance_id, lemon_hover_index as _);
                     gl::Uniform1f(u_hover_glow, 0.4);
@@ -967,20 +1055,21 @@ fn main() {
         }
 
         // lemon selection animation
-        if lemon_selection_index < lemons.len() {
+        if lemon_selection_index < lemons.len() && !lemon_selection_anim.is_nan() {
             const MAX: Real = 1.4;
             const MIN: Real = 0.0;
             const LEN: Real = 0.4;
 
-            let glow = if lemon_selection_anim < LEN {
-                MAX - (MAX-MIN) * (1.0 - (lemon_selection_anim / LEN - 1.0).powi(2)).sqrt()
+            let glow = if lemon_selection_anim < 1.0 {
+                MAX - (MAX-MIN) * (1.0 - (lemon_selection_anim - 1.0).powi(2)).sqrt()
             } else {
+                lemon_selection_anim = NAN;
                 MIN
             };
             unsafe {
                 gl::Uniform1f(u_selection_glow, glow);
             }
-            lemon_selection_anim += FRAME_DELTA_TIME;
+            lemon_selection_anim += FRAME_DELTA_TIME / LEN;
         }
 
         debug_histogram.add_bar_segment("rigidbody integration, static collisions",
@@ -1018,32 +1107,44 @@ fn main() {
                     assert!(bounding_volume_overlap, "lemon collision without BV overlap");
                     assert!(collision.depth >= 0.0, "collision reported negative depth");
 
-                    if !debug_pause {
-                        phys::resolve_collision_dynamic(
-                            collision, &mut lemon.phys, &mut other.phys,
+                    if dragging_lemon!(lemon_index) {
+                        if !debug_pause { phys::resolve_collision_kinematic(
+                            collision.neg(), &mut other.phys, &lemon.phys,
                             some_if(debug_draw_collision_response, &mut debug),
-                        );
-                        unsafe {
-                            gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transform);
-                            gl::buffer_sub_data(
-                                gl::ARRAY_BUFFER,
-                                lemon_index,
-                                slice::from_ref(&lemon.get_transform_with_scale()),
+                        ); }
+                    } else if dragging_lemon!(other_index) {
+                        if !debug_pause { phys::resolve_collision_kinematic(
+                            collision, &mut lemon.phys, &other.phys,
+                            some_if(debug_draw_collision_response, &mut debug),
+                        ); }
+                    } else {
+                        if !debug_pause {
+                            phys::resolve_collision_dynamic(
+                                collision, &mut lemon.phys, &mut other.phys,
+                                some_if(debug_draw_collision_response, &mut debug),
                             );
-                            gl::buffer_sub_data(
-                                gl::ARRAY_BUFFER,
-                                other_index,
-                                slice::from_ref(&other.get_transform_with_scale()),
+                        } else if debug_draw_collision_response { // draw debug w/o side effects
+                            let mut temp_lemon_phys = lemon.phys.clone();
+                            let mut temp_other_phys = other.phys.clone();
+                            phys::resolve_collision_dynamic(
+                                collision, &mut temp_lemon_phys, &mut temp_other_phys,
+                                Some(&mut debug),
                             );
                         }
-                    } else if debug_draw_collision_response { // draw debug w/o side effects
-                        let mut temp_lemon_phys = lemon.phys.clone();
-                        let mut temp_other_phys = other.phys.clone();
-                        phys::resolve_collision_dynamic(
-                            collision, &mut temp_lemon_phys, &mut temp_other_phys,
-                            Some(&mut debug),
-                        );
                     }
+                    if !debug_pause { unsafe {
+                        gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transform);
+                        gl::buffer_sub_data(
+                            gl::ARRAY_BUFFER,
+                            lemon_index,
+                            slice::from_ref(&lemon.get_transform_with_scale()),
+                        );
+                        gl::buffer_sub_data(
+                            gl::ARRAY_BUFFER,
+                            other_index,
+                            slice::from_ref(&other.get_transform_with_scale()),
+                        );
+                    } }
                 }
             }
         }

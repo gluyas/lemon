@@ -86,9 +86,9 @@ pub fn integrate_rigidbody_fixed_timestep(rb: &mut Rigidbody) {
         rb.orientation  = rb.orientation.normalize();
 
         // this is a hacked in solution to rigidbodies tending to spin for too long.
-        // the friction model at collision time does not affect spinning points.
+        // the impulse-based friction model does not affect spinning points.
         let angular_speed = angular_velocity.magnitude();
-        rb.angular_momentum -= rb.get_inertia() * angular_velocity 
+        rb.angular_momentum -= rb.get_inertia() * angular_velocity
                              * ANGULAR_DRAG / angular_speed;
     }
 }
@@ -153,6 +153,80 @@ pub fn resolve_collision_static(
     let impulse = reaction_vector + friction_vector;
     rb1.velocity         += impulse / rb1.mass;
     rb1.angular_momentum += offset.cross(impulse);
+}
+
+// TODO: don't store mass, inertia, on kinematic bodies?
+pub fn resolve_collision_kinematic(
+    mut collision: Collision,
+    rb1: &mut Rigidbody,
+    rb2: &Rigidbody,
+    mut debug: Option<&mut DebugRender>,
+) {
+    rb1.position    += collision.normal * collision.depth;
+    collision.point += collision.normal * collision.depth / 2.0;
+    collision.depth  = 0.0;
+
+    let rb1_inertia_inverse = rb1.get_inertia_inverse();
+    let rb1_point_offset    = collision.point - rb1.position;
+    let rb1_point_velocity  = ( rb1_inertia_inverse
+                                * rb1.angular_momentum
+                              ).cross(rb1_point_offset)
+                              + rb1.velocity;
+
+    let rb2_inertia_inverse = rb2.get_inertia_inverse();
+    let rb2_point_offset    = collision.point - rb2.position;
+    let rb2_point_velocity  = ( rb2_inertia_inverse
+                                * rb2.angular_momentum
+                              ).cross(rb2_point_offset)
+                              + rb2.velocity;
+
+    let relative_velocity = rb1_point_velocity - rb2_point_velocity;
+    let collision_tangent = proj_onto_plane(relative_velocity, collision.normal)
+                           .normalize();
+
+    let reaction = {
+        let proj    = -(1.0 + COLLISION_ELASTICITY)
+                    * relative_velocity.dot(collision.normal);
+        let linear  = 1.0 / rb1.mass;
+                 // + 1.0 / infinity  => 0.0
+        let angular = ( rb1_inertia_inverse
+                      * rb1_point_offset.cross(collision.normal)
+                      ).cross(rb1_point_offset);
+                 // + [infinity]^-1 => 0.0
+        proj / (linear + angular.dot(collision.normal))
+    };
+    let reaction_vector = reaction * collision.normal;
+
+    let friction = {
+        let proj    = relative_velocity.dot(collision_tangent);
+        let linear  = 1.0 / rb1.mass;
+        let angular = ( rb1_inertia_inverse
+                      * rb1_point_offset.cross(collision_tangent)
+                      ).cross(rb1_point_offset);
+
+        let cap     = proj / (linear + angular.dot(collision_tangent));
+        cap.min(reaction * FRICTION).neg()
+    };
+    let friction_vector = friction * collision_tangent;
+
+    if let Some(ref mut debug) = debug {
+        debug.draw_ray(
+            &color!(0x0000AFFF).truncate(), 1, &collision.point,
+            &(friction_vector / FRAME_DELTA_TIME)
+        );
+        debug.draw_ray(
+            &color!(0xAF0000FF).truncate(), 1, &collision.point,
+            &(reaction_vector / FRAME_DELTA_TIME)
+        );
+        debug.draw_ray(
+            &color!(0x00AF00FF).truncate(), 1, &collision.point,
+            &(relative_velocity / FRAME_DELTA_TIME)
+        );
+    }
+
+    let impulse = reaction_vector + friction_vector;
+    rb1.velocity         += impulse / rb1.mass;
+    rb1.angular_momentum += rb1_point_offset.cross(impulse);
 }
 
 pub fn resolve_collision_dynamic(

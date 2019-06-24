@@ -668,7 +668,7 @@ pub fn raycast(mut ray: Ray, lemon: &Lemon) -> RaycastSolid {
             // ray never gets closer to axis than lemon's widest point
             return RaycastSolid::NON_INTERSECTION;
         }
-let mut roots = (0.0, 0.0, 0.0, 0.0);
+
         // choose iteration starting points based on the best combination of:
         //     f(a_x) = +/- sqrt(h_c)*(x + h_b/h_c) = asymptotes of h
         //     f(b_x) = h_min_y                     = horizontal at minimum value of h
