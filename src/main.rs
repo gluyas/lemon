@@ -920,7 +920,7 @@ fn main() {
             }
 
             // TEST STATIC WALL-PLANE COLLISIONS
-            if !debug_pause {
+            if !debug_pause || dragging_lemon!(lemon_index) {
                 for &dir in [
                     vec2!(1.0, 0.0), vec2!(-1.0, 0.0), vec2!(0.0, 1.0), vec2!(0.0, -1.0)
                 ].into_iter() {
@@ -929,9 +929,15 @@ fn main() {
                         if let Some(collision) = lemon::get_collision_halfspace(
                             &lemon, (wall_normal, -ARENA_WIDTH), None,
                         ) {
-                            phys::resolve_collision_static(
-                                collision, &mut lemon.phys, None,
-                            );
+                            if dragging_lemon!(lemon_index) {
+                                phys::resolve_basic_collision_static(
+                                    collision, &mut lemon.phys,
+                                );
+                            } else {
+                                phys::resolve_collision_static(
+                                    collision, &mut lemon.phys, None,
+                                );
+                            }
                         }
                     }
                 }
@@ -943,7 +949,11 @@ fn main() {
                 some_if(debug_draw_colliders_floor, &mut debug),
             );
             if let Some(collision) = floor_collision {
-                if !debug_pause {
+                if dragging_lemon!(lemon_index) {
+                    phys::resolve_basic_collision_static(
+                        collision, &mut lemon.phys,
+                    );
+                } else if !debug_pause {
                     phys::resolve_collision_static(
                         collision, &mut lemon.phys,
                         some_if(debug_draw_collision_response, &mut debug),

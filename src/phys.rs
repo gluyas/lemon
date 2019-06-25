@@ -324,3 +324,14 @@ pub fn resolve_collision_dynamic(
     rb2.velocity         -= impulse / rb2.mass;
     rb2.angular_momentum -= rb2_point_offset.cross(impulse);
 }
+
+pub fn resolve_basic_collision_static(
+    mut collision: Collision,
+    rb1: &mut Rigidbody,
+) {
+    rb1.position    += collision.normal * collision.depth;
+    collision.point += collision.normal * collision.depth / 2.0;
+    collision.depth  = 0.0;
+
+    rb1.velocity     = proj_onto_plane(rb1.velocity, collision.normal);
+}
