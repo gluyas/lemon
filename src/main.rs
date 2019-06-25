@@ -681,6 +681,17 @@ fn main() {
                     VirtualKeyCode::T => if let ElementState::Pressed = state {
                         debug_spin_between_frames = modifiers.ctrl;
                     },
+                    VirtualKeyCode::R => if let ElementState::Pressed = state {
+                        if modifiers.ctrl && modifiers.shift {
+                            lemons.clear();
+                            debug_frame_store.clear();
+                            if lemon_selection_index != !0 {
+                                lemon_selection_index = !0;
+                                camera_target.z       = CAMERA_HEIGHT_DEFAULT;
+                                camera_lerp           = 0.0;
+                            }
+                        }
+                    },
                     VirtualKeyCode::Space => if let ElementState::Pressed = state {
                         if modifiers.ctrl {
                             spawn_lemon(&mut lemons, vbo_lemon_s, vbo_lemon_color);
@@ -697,6 +708,11 @@ fn main() {
                     },
                     VirtualKeyCode::Escape => if let ElementState::Pressed = state {
                         debug_pause_next_frame = !debug_pause;
+                        if lemon_selection_index >= lemons.len() {
+                            lemon_selection_index = !0;
+                            camera_target.z       = CAMERA_HEIGHT_DEFAULT;
+                            camera_lerp           = 0.0;
+                        }
                     },
                     VirtualKeyCode::Right => {
                         if let ElementState::Pressed = state {
@@ -721,7 +737,7 @@ fn main() {
         if exit { break 'main; }
 
         // STEP THROUGH FRAMES WHILE PAUSED
-        if debug_pause && debug_frame_step != 0 {
+        if debug_pause && debug_frame_step != 0 && debug_frame_store.len() > 0 {
             if debug_frame_step_delay == 0 || debug_frame_step_delay > FRAME_RATE / 5 {
                 let target_frame = debug_frame_current as isize + debug_frame_step;
                 if target_frame < 0 {
