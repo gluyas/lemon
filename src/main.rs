@@ -871,14 +871,12 @@ fn main() {
         for (lemon_index, lemon) in lemons.iter_mut().enumerate() {
             // LEMON PARTY CODE
             if debug_lemon_party && !debug_pause {
-                use mem::transmute as tm; // this is hacky as shit but important!
-
                 const LSB_MASK:   u32 = 0x1;
                 const PARTY_RATE: f32 = 0.5 / SECOND;
 
-                let lsb = unsafe { tm::<_,u32>(lemon.sagitta) & LSB_MASK > 0 };
+                let lsb = lemon.sagitta.to_bits() & LSB_MASK != 0;
                 let mut normalized = lemon.get_normalized();
-                normalized = if lsb {
+                normalized = if lsb { // increase or decrease sagitta based on its LSB
                     NormalizedLemon::new(normalized.s + PARTY_RATE * lemon.scale)
                 } else {
                     NormalizedLemon::new(normalized.s - PARTY_RATE * lemon.scale)
@@ -889,10 +887,10 @@ fn main() {
                     else                                      { lsb   }
                 };
                 lemon.mutate_shape(normalized.s, lemon.scale);
-                lemon.sagitta = unsafe { // set the LSB for next frame
-                    if next_lsb { tm::<_,f32>(tm::<_,u32>(lemon.sagitta) | LSB_MASK) }
-                    else        { tm::<_,f32>(tm::<_,u32>(lemon.sagitta) &!LSB_MASK) }
-                };
+                lemon.sagitta = f32::from_bits( // set the LSB for next frame
+                    if next_lsb { lemon.sagitta.to_bits() | LSB_MASK }
+                    else        { lemon.sagitta.to_bits() &!LSB_MASK }
+                );
                 unsafe {
                     gl::BindBuffer(gl::ARRAY_BUFFER, vbo_lemon_s);
                     gl::buffer_sub_data(gl::ARRAY_BUFFER,
