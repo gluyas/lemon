@@ -230,6 +230,11 @@ const LEMON_S_MAX:        f32 = 0.75;
 const LEMON_PARTY_S_MIN:  f32 = 0.30;
 const LEMON_PARTY_S_MAX:  f32 = 0.95;
 
+const CAMERA_HEIGHT_BASE:    f32 = 0.5;
+const CAMERA_HEIGHT_FACTOR:  f32 = 0.6;
+const CAMERA_HEIGHT_DEFAULT: f32 = CAMERA_HEIGHT_BASE + 1.0 * CAMERA_HEIGHT_FACTOR;
+const CAMERA_LERP_TIME:      f32 = 0.3;
+
 const WIDTH:  usize = 1280;
 const HEIGHT: usize = 720;
 const ASPECT: f32   = WIDTH as f32 / HEIGHT as f32;
@@ -507,6 +512,7 @@ fn main() {
     let mut camera_target       = point3!(VEC3_0);
     let mut camera_lerp         = NAN;
     let mut camera_lerp_origin  = point3!(VEC3_0);
+    let mut camera_lerp_point   = point3!(VEC3_0);
     let mut camera_needs_update = true;
 
     let mut mouse_pixel    = point2!(VEC2_0);
@@ -679,9 +685,15 @@ fn main() {
                         if modifiers.ctrl {
                             spawn_lemon(&mut lemons, vbo_lemon_s, vbo_lemon_color);
                         } else {
-                            lemons.get_mut(lemon_selection_index).map(reset_lemon);
+                            if lemon_selection_index < lemons.len() {
+                                reset_lemon(&mut lemons[lemon_selection_index]);
+                                camera_lerp_origin = camera_lerp_point;
+                                camera_lerp        = 0.25;
+                            } else {
+                                camera_target = point3!(0.0, 0.0, CAMERA_HEIGHT_DEFAULT);
+                                camera_lerp   = 0.0;
+                            }
                         }
-                        camera_needs_update = true;
                     },
                     VirtualKeyCode::Escape => if let ElementState::Pressed = state {
                         debug_pause_next_frame = !debug_pause;
@@ -761,30 +773,34 @@ fn main() {
                 camera_target = Point3 {
                     x: lemon.phys.position.x,
                     y: lemon.phys.position.y,
-                    z: lemon.phys.position.z * 0.5 + 0.5,
+                    z: lemon.phys.position.z * CAMERA_HEIGHT_FACTOR + CAMERA_HEIGHT_BASE,
                 };
             }
 
-            let camera_target = if !camera_lerp.is_nan() {
-                // shadow camera_target during camera transition
+            if !camera_lerp.is_nan() {
                 if camera_lerp < 1.0 {
-                    let offset         = (1.0 - (camera_lerp - 1.0).powi(2)).sqrt()
-                                       * (camera_target - camera_lerp_origin);
-                    camera_lerp       += FRAME_DELTA_TIME / 0.3;
-                    camera_lerp_origin + offset
+                    if camera_lerp == 0.0 {
+                        // set origin on first frame of transition
+                        camera_lerp_origin = camera_lerp_point;
+                    } else {
+                        // evaluate elliptical easing function
+                        camera_lerp_point  = camera_lerp_origin
+                                           + (1.0 - (camera_lerp - 1.0).powi(2)).sqrt()
+                                           * (camera_target - camera_lerp_origin);
+                    }
+                    camera_lerp += FRAME_DELTA_TIME / 0.3;
                 } else {
-                    camera_lerp = NAN;
-                    camera_target
+                    camera_lerp       = NAN;
+                    camera_lerp_point = camera_target;
                 }
             } else {
-                camera_lerp_origin = camera_target;
-                camera_target
-            };
-            camera.position   = camera_target - camera_direction * camera_distance;
-            camera.projection = perspective(Rad(camera_fovy), ASPECT, 0.1, 1000.0);
+                camera_lerp_point = camera_target;
+            }
+            camera.position   = camera_lerp_point - camera_direction * camera_distance;
+            camera.projection = perspective(Rad(camera_fovy), ASPECT, 0.1, 1e+6);
             camera.view       = Mat4::look_at(
                 camera.position,
-                camera_target + camera_direction,
+                camera_lerp_point + camera_direction,
                 VEC3_Z,
             );
 
@@ -1000,24 +1016,28 @@ fn main() {
         }
         if mouse_released {
             if mouse_clicked && lemon_interact_index == lemon_hover_index {
-                if lemon_selection_index == !0 && lemon_interact_index == !0 {
-                    // move camera focus if already in free look mode
-                    let raycast_floor = raycast_plane_double_sided(
-                        mouse_ray, Plane::new(VEC3_Z, 0.0),
-                    );
-                    if raycast_floor.is_intersection() && raycast_floor.is_non_negative() {
-                        // LAG: camera unable to update until next frame
-                        camera_target.x     = raycast_floor.point.x;
-                        camera_target.y     = raycast_floor.point.y;
-                        camera_lerp         = 0.0;
-                        camera_needs_update = true;
+                if lemon_interact_index == !0 {
+                    if lemon_selection_index == !0 {
+                        // move camera focus if already in free look mode
+                        let raycast_floor = raycast_plane_double_sided(
+                            mouse_ray, Plane::new(VEC3_Z, 0.0),
+                        );
+                        if raycast_floor.is_intersection() && raycast_floor.is_non_negative()
+                        && raycast_floor.point.x.abs() <= ARENA_WIDTH
+                        && raycast_floor.point.y.abs() <= ARENA_WIDTH
+                        {
+                            // LAG: camera unable to update until next frame
+                            camera_target.x = raycast_floor.point.x;
+                            camera_target.y = raycast_floor.point.y;
+                        }
                     }
-                } else {
-                    lemon_selection_index = lemon_interact_index;
-                    camera_lerp           = 0.0;
-                    camera_needs_update   = true;
+                    camera_target.z         = CAMERA_HEIGHT_DEFAULT;
+                    camera_lerp             = 0.0;
+                } else if lemon_selection_index != lemon_interact_index {
+                    camera_lerp             = 0.0;
                 }
-                lemon_selection_anim = 0.0;
+                lemon_selection_index = lemon_interact_index;
+                lemon_selection_anim  = 0.0;
                 unsafe {
                     gl::Uniform1i(u_selection_instance_id, lemon_selection_index as _);
                 }
@@ -1049,7 +1069,7 @@ fn main() {
             if lemon_hover_index != lemon_hover_prev_index || mouse_released {
                 unsafe {
                     gl::Uniform1i(u_hover_instance_id, lemon_hover_index as _);
-                    gl::Uniform1f(u_hover_glow, 0.4);
+                    gl::Uniform1f(u_hover_glow, 0.3);
                 }
             }
         }

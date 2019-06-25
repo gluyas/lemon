@@ -18,9 +18,9 @@ In-development interactive toy, written in Rust. Exists for me to practice, deve
 | :---: | ------ |
 | Mouse Drag | Orbit camera |
 | Mouse Scroll | Zoom camera |
-| Mouse Click | Select lemon |
-| Mouse Click + Drag | Grab lemon |
-| `Space` | Reset current lemon |
+| Mouse Click | Set camera look/follow target |
+| Mouse Click + Drag | Grab and move lemon |
+| `Space` | Reset lemon/camera position |
 | `Ctrl` + `Space` | Create new lemon |
 | `Ctrl` + Scroll | Edit lemon scale |
 | `Alt` + Scroll | Edit lemon sagitta (width) |
