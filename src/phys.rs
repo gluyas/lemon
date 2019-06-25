@@ -1,7 +1,7 @@
 use super::*;
 
 // TODO: 9.81 gravity and scale lemons to a resonable size?
-const GRAVITY: Vec3 = vec3!(0.0, 0.0, -27.0 * METER / SECOND / SECOND);
+const GRAVITY: Vec3 = vec3!(0.0, 0.0, -35.0 * METER / SECOND / SECOND);
 
 const COLLISION_ELASTICITY: f32 = 0.15;
 
