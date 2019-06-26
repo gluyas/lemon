@@ -330,7 +330,7 @@ impl Histogram {
             base_mark = base_mark.max(mark);
         }
         // clear pixels above bar
-        for i_row in base_mark..HISTOGRAM_HEIGHT {
+        for i_row in base_mark..self.h {
             for mut i_col in 0..(bar_width + bar_space) {
                 i_col += self.col_index;
                 i_col %= self.w;

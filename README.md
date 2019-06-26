@@ -9,7 +9,6 @@ In-development interactive toy, written in Rust. Exists for me to practice, deve
 - OpenGL bindings ([gl_generator](https://crates.io/crates/gl_generator))
 - Windowing, user input handling ([glutin](https://crates.io/crates/glutin))
 - 3D math types ([cgmath](https://crates.io/crates/cgmath))
-- Image format processing ([png](https://crates.io/crates/png), [image](https://crates.io/crates/image))
 - Rust standard library; other lightweight, de-facto-standard crates
 
 ### Controls
@@ -45,6 +44,10 @@ In-development interactive toy, written in Rust. Exists for me to practice, deve
 | :-: | :-----: | :-------: | --------------- |
 | `J` | Enable | `Ctrl`: Disable | Histogram data logging |
 | `T` | Sleep | `Ctrl`: Spin | Thread waiting method between frames |
+
+### Command line options
+- `-n` `maximum number of lemons` (default: 256)
+- `-w` `window width` `-h` `window height` (default: 1280x720)
 
 ## Current Features
 - Simple rigidbody dynamics simulation

@@ -2,7 +2,6 @@
 extern crate bitflags;
 extern crate glutin;
 extern crate cgmath;
-extern crate png;
 extern crate rand;
 
 macro_rules! vec4 {
@@ -199,14 +198,6 @@ const FRAME_RATE:       usize    = 60;
 const FRAME_DELTA_TIME: f32      = 1.0 / FRAME_RATE as f32;
 const FRAME_DURATION:   Duration = Duration::from_nanos((1.0e+9 / FRAME_RATE as f64) as u64);
 
-const HISTOGRAM_WIDTH:       usize = 3 * HEIGHT / 3;
-const HISTOGRAM_HEIGHT:      usize = HEIGHT / 3;
-const HISTOGRAM_X:           isize = (WIDTH - HISTOGRAM_WIDTH) as isize;
-const HISTOGRAM_Y:           isize = (HEIGHT / 16) as isize;
-const HISTOGRAM_BAR_WIDTH:   usize = 2;
-const HISTOGRAM_BAR_SPACING: usize = 0;
-const HISTOGRAM_NANO_PER_PX: u32   = FRAME_DURATION.subsec_nanos() / HISTOGRAM_HEIGHT as u32;
-
 /// Constants for converting from human-readable SI units into per-frame units
 mod si {
     use super::*;
@@ -221,8 +212,6 @@ mod si {
 }
 use crate::si::*;
 
-const MAX_BODIES: usize = 256;
-
 const LEMON_SCALE_MAX:    f32 = 1.25;
 const LEMON_SCALE_MIN:    f32 = 0.75;
 const LEMON_S_MIN:        f32 = 0.50;
@@ -235,14 +224,35 @@ const CAMERA_HEIGHT_FACTOR:  f32 = 0.6;
 const CAMERA_HEIGHT_DEFAULT: f32 = CAMERA_HEIGHT_BASE + 1.0 * CAMERA_HEIGHT_FACTOR;
 const CAMERA_LERP_TIME:      f32 = 0.3;
 
-const WIDTH:  usize = 1280;
-const HEIGHT: usize = 720;
-const ASPECT: f32   = WIDTH as f32 / HEIGHT as f32;
+const DEFAULT_MAX_BODIES: usize = 256;
+const DEFAULT_WIDTH:      usize = 1280;
+const DEFAULT_HEIGHT:     usize = 720;
 
 fn main() {
+    let (max_bodies, width, height) = {
+        let mut max_bodies = DEFAULT_MAX_BODIES;
+        let mut width      = DEFAULT_WIDTH;
+        let mut height     = DEFAULT_HEIGHT;
+
+        let mut args = std::env::args();
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "-n" => args.next().map(|n| max_bodies = n.parse().unwrap()),
+                "-w" => args.next().map(|n| width      = n.parse().unwrap()),
+                "-h" => args.next().map(|n| height     = n.parse().unwrap()),
+                _    => continue,
+            };
+        }
+        (max_bodies, width, height)
+    };
+    let aspect     = width as f32 / height as f32;
+    if max_bodies <= 0   { panic!("max bodies must be greater than 0"); }
+    if width      <= 127 { panic!("window width must be greater than 127"); }
+    if height     <= 127 { panic!("window height must be greater than 127"); }
+
     let mut events_loop = EventsLoop::new();
     let window = WindowBuilder::new()
-        .with_dimensions(dpi::LogicalSize::new(WIDTH as _, HEIGHT as _))
+        .with_dimensions(dpi::LogicalSize::new(width as _, height as _))
         .with_title("lemon")
         .with_resizable(false);
     let windowed_context = ContextBuilder::new()
@@ -359,7 +369,7 @@ fn main() {
         let a_transform    = gl::GetAttribLocation(program, cstr!("a_transform")) as GLuint;
         let vbo_transform = gl::gen_object(gl::GenBuffers);
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transform);
-        gl::buffer_init::<Mat4>(gl::ARRAY_BUFFER, MAX_BODIES, gl::STREAM_DRAW);
+        gl::buffer_init::<Mat4>(gl::ARRAY_BUFFER, max_bodies, gl::STREAM_DRAW);
         for i in 0..4 { // all 4 column vectors
             let a_transform_i = a_transform + i as GLuint;
             gl::EnableVertexAttribArray(a_transform_i);
@@ -374,7 +384,7 @@ fn main() {
         let a_lemon_s   = gl::GetAttribLocation(program, cstr!("a_lemon_s")) as GLuint;
         let vbo_lemon_s = gl::gen_object(gl::GenBuffers);
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo_lemon_s);
-        gl::buffer_init::<f32>(gl::ARRAY_BUFFER, MAX_BODIES, gl::DYNAMIC_DRAW);
+        gl::buffer_init::<f32>(gl::ARRAY_BUFFER, max_bodies, gl::DYNAMIC_DRAW);
         gl::EnableVertexAttribArray(a_lemon_s);
         gl::VertexAttribPointer(a_lemon_s, 1, gl::FLOAT, gl::FALSE, 0, 0 as *const GLvoid);
         gl::VertexAttribDivisor(a_lemon_s, 1);
@@ -382,7 +392,7 @@ fn main() {
         let a_lemon_color   = gl::GetAttribLocation(program, cstr!("a_lemon_color")) as GLuint;
         let vbo_lemon_color = gl::gen_object(gl::GenBuffers);
         gl::BindBuffer(gl::ARRAY_BUFFER, vbo_lemon_color);
-        gl::buffer_init::<Vec3>(gl::ARRAY_BUFFER, MAX_BODIES, gl::DYNAMIC_DRAW);
+        gl::buffer_init::<Vec3>(gl::ARRAY_BUFFER, max_bodies, gl::DYNAMIC_DRAW);
         gl::EnableVertexAttribArray(a_lemon_color);
         gl::VertexAttribPointer(a_lemon_color, 3, gl::FLOAT, gl::FALSE, 0, 0 as *const GLvoid);
         gl::VertexAttribDivisor(a_lemon_color, 1);
@@ -407,9 +417,9 @@ fn main() {
         )
     };
 
-    let mut lemons = Vec::with_capacity(MAX_BODIES);
-    fn spawn_lemon(lemons: &mut Vec<Lemon>, vbo_lemon_s: GLuint, vbo_lemon_color: GLuint) {
-        if lemons.len() >= MAX_BODIES { return; }
+    let mut lemons = Vec::with_capacity(max_bodies);
+    let spawn_lemon = |lemons: &mut Vec<Lemon>| {
+        if lemons.len() >= max_bodies { return; }
 
         let scale = LEMON_SCALE_MIN + (LEMON_SCALE_MAX-LEMON_SCALE_MIN) * random::<f32>();
         let s     = LEMON_S_MIN + (LEMON_S_MAX-LEMON_S_MIN) * random::<f32>();
@@ -436,7 +446,7 @@ fn main() {
 
         reset_lemon(&mut new_lemon);
         lemons.push(new_lemon);
-    }
+    };
     fn reset_lemon(lemon: &mut Lemon) {
         lemon.phys.position         = point3!(0.0, 0.0, (2.0+3.0*random::<f32>())*METER);
         lemon.phys.orientation      = Quat::from_axis_angle(
@@ -447,7 +457,7 @@ fn main() {
                                     * (random::<Vec3>() - vec3!(0.5, 0.5, 0.5)) * 2.0
                                     * TAU / 5.0 / SECOND;
     }
-    spawn_lemon(&mut lemons, vbo_lemon_s, vbo_lemon_color);
+    spawn_lemon(&mut lemons);
     let mut lemon_selection_index:  usize = 0;
     let mut lemon_selection_anim:   Real  = 0.0;
     let mut lemon_hover_index:      usize = !0;
@@ -468,7 +478,7 @@ fn main() {
         debug.draw_axes(1.5, !0, &Mat4::identity());
     }
 
-    let mut debug_ui = DebugUi::new(WIDTH, HEIGHT, gl::TEXTURE1);
+    let mut debug_ui = DebugUi::new(width, height, gl::TEXTURE1);
 
     let mut debug_draw_axes               = false;
     let mut debug_draw_torus_section      = false;
@@ -481,14 +491,21 @@ fn main() {
     let mut debug_lemon_party             = false;
     let mut debug_spin_between_frames     = false;
 
-    let mut debug_histogram               = Histogram::new(
-        HISTOGRAM_X, HISTOGRAM_Y, HISTOGRAM_WIDTH, HISTOGRAM_HEIGHT,
+    let debug_histogram_width:       usize = height.min(width);
+    let debug_histogram_height:      usize = height / 3;
+    let debug_histogram_bar_width:   usize = 2;
+    let debug_histogram_bar_spacing: usize = 0;
+    let debug_histogram_nano_per_px: u32   = FRAME_DURATION.subsec_nanos()
+                                           / debug_histogram_height as u32;
+    let mut debug_histogram                = Histogram::new(
+        (width - debug_histogram_width) as isize, (height / 16) as isize,
+        debug_histogram_width, debug_histogram_height,
     );
-    let mut debug_histogram_logging       = true;
-    let mut debug_histogram_display       = false;
-    fn get_histogram_bar_height(elapsed: Duration) -> usize {
-        (elapsed.subsec_nanos() / HISTOGRAM_NANO_PER_PX) as usize
-    }
+    let mut debug_histogram_logging        = true;
+    let mut debug_histogram_display        = false;
+    let get_histogram_bar_height = |elapsed: Duration| -> usize {
+        (elapsed.subsec_nanos() / debug_histogram_nano_per_px) as usize
+    };
 
     let mut debug_frame_store             = Jagged::new();
     let mut debug_frame_current           = 0;
@@ -578,8 +595,8 @@ fn main() {
 
                     if mouse_pixel_movement.x != 0.0 || mouse_pixel_movement.y != 0.0 {
                         let mouse_pos_new = Point2::new(
-                            (mouse_pixel.x * 2.0) as f32 / WIDTH  as f32 - 1.0,
-                            (mouse_pixel.y *-2.0) as f32 / HEIGHT as f32 + 1.0,
+                            (mouse_pixel.x * 2.0) as f32 / width  as f32 - 1.0,
+                            (mouse_pixel.y *-2.0) as f32 / height as f32 + 1.0,
                         );
                         mouse_movement         = mouse_pos_new - mouse_pos;
                         mouse_pos              = mouse_pos_new;
@@ -630,9 +647,6 @@ fn main() {
                 DeviceEvent::Key(KeyboardInput {
                     state, modifiers, virtual_keycode: Some(key), ..
                 }) => match key {
-                    VirtualKeyCode::P => if let ElementState::Pressed = state {
-                        capture_image_to_file();
-                    },
                     VirtualKeyCode::A => if let ElementState::Pressed = state {
                         debug_draw_axes = !debug_draw_axes;
                     },
@@ -694,7 +708,7 @@ fn main() {
                     },
                     VirtualKeyCode::Space => if let ElementState::Pressed = state {
                         if modifiers.ctrl {
-                            spawn_lemon(&mut lemons, vbo_lemon_s, vbo_lemon_color);
+                            spawn_lemon(&mut lemons);
                         } else {
                             if lemon_selection_index < lemons.len() {
                                 reset_lemon(&mut lemons[lemon_selection_index]);
@@ -771,7 +785,7 @@ fn main() {
         camera_needs_update |= !camera_lerp.is_nan();
         if camera_needs_update {
             if dragging_lemon!(!0) {
-                camera_azimuth   -= (180.0 * mouse_movement.x * ASPECT).to_radians();
+                camera_azimuth   -= (180.0 * mouse_movement.x * aspect).to_radians();
 
                 camera_elevation -= (180.0 * mouse_movement.y).to_radians();
                 camera_elevation  = camera_elevation.min(85.0_f32.to_radians());
@@ -813,7 +827,7 @@ fn main() {
                 camera_lerp_point = camera_target;
             }
             camera.position   = camera_lerp_point - camera_direction * camera_distance;
-            camera.projection = perspective(Rad(camera_fovy), ASPECT, 0.1, 1e+6);
+            camera.projection = perspective(Rad(camera_fovy), aspect, 0.1, 1e+6);
             camera.view       = Mat4::look_at(
                 camera.position,
                 camera_lerp_point + camera_direction,
@@ -1251,11 +1265,11 @@ fn main() {
         if debug_histogram_logging {
             let wakeup_mark = get_histogram_bar_height(frame_start_time.elapsed());
             debug_histogram.add_bar_segment("frame sleep",
-                0, HISTOGRAM_HEIGHT.min(wakeup_mark),
+                0, debug_histogram_height.min(wakeup_mark),
             );
-            if wakeup_mark < HISTOGRAM_HEIGHT {
+            if wakeup_mark < debug_histogram_height {
                 debug_histogram.add_bar_segment("frame sleep defecit",
-                    short_color(0, 0, 31, true), HISTOGRAM_HEIGHT,
+                    short_color(0, 0, 31, true), debug_histogram_height,
                 );
             } else {
                 debug_histogram.add_bar_segment("frame sleep excess",
@@ -1263,10 +1277,10 @@ fn main() {
                 );
             }
             debug_histogram.add_line("expected frame duration",
-                short_color(0, 0, 0, true), HISTOGRAM_HEIGHT - 1,
+                short_color(0, 0, 0, true), debug_histogram_height - 1,
             );
             debug_histogram.render_and_flush_buffer(
-                HISTOGRAM_BAR_WIDTH, HISTOGRAM_BAR_SPACING
+                debug_histogram_bar_width, debug_histogram_bar_spacing
             );
         } else {
             debug_histogram.clear_buffer();
@@ -1411,43 +1425,6 @@ fn make_line_strip_grid(
         step!(0, 0); step!(1, half);
     }
     points
-}
-
-fn capture_image_to_file() -> thread::JoinHandle<()> {
-    use std::fs::File;
-    use std::io::BufWriter;
-
-    let mut pixels = unsafe {
-        let buf_len    = 4 * WIDTH * HEIGHT;
-        let mut pixels = Vec::<u8>::with_capacity(buf_len);
-        pixels.set_len(buf_len);
-
-        gl::ReadPixels(
-            0, 0, WIDTH as GLsizei, HEIGHT as GLsizei,
-            gl::RGBA, gl::UNSIGNED_BYTE,
-            pixels.as_mut_ptr() as *mut GLvoid,
-        );
-        pixels
-    };
-
-    thread::spawn(move || {
-        unsafe {
-            slice::from_raw_parts_mut(
-                pixels.as_mut_ptr() as *mut [[u8; 4]; WIDTH], HEIGHT,
-            ).reverse();
-        }
-
-        let mut writer = {
-            use png::HasParameters;
-            let mut encoder = png::Encoder::new(
-                BufWriter::new(File::create("capture.png").expect("file creation failed")),
-                WIDTH as u32, HEIGHT as u32,
-            );
-            encoder.set(png::ColorType::RGBA).set(png::BitDepth::Eight);
-            encoder.write_header().expect("failed to write png header")
-        };
-        writer.write_image_data(pixels.as_slice()).expect("failed to write png data");
-    })
 }
 
 #[inline]

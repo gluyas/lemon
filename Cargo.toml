@@ -11,6 +11,5 @@ gl_generator = "0.11"
 [dependencies]
 glutin = "0.20"
 cgmath = "0.17"
-png = "0.14"
 rand = "0.6"
 bitflags = "1.0"
