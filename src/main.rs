@@ -234,13 +234,15 @@ const CAMERA_HEIGHT_DEFAULT: f32 = CAMERA_HEIGHT_BASE + 1.0 * CAMERA_HEIGHT_FACT
 const CAMERA_LERP_TIME:      f32 = 0.3;
 
 const DEFAULT_VSYNC:      bool  = false;
+const DEFAULT_MSAA:       u16   = 2;
 const DEFAULT_MAX_BODIES: usize = 256;
 const DEFAULT_WIDTH:      usize = 1280;
 const DEFAULT_HEIGHT:     usize = 720;
 
 fn main() {
-    let (vsync, max_bodies, width, height) = {
+    let (vsync, msaa, max_bodies, width, height) = {
         let mut vsync      = DEFAULT_VSYNC;
+        let mut msaa       = DEFAULT_MSAA;
         let mut max_bodies = DEFAULT_MAX_BODIES;
         let mut width      = DEFAULT_WIDTH;
         let mut height     = DEFAULT_HEIGHT;
@@ -249,13 +251,23 @@ fn main() {
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "-v" => args.next().map(|b| vsync      = b.parse().unwrap()),
+                "-m" => args.next().map(|b| msaa       = b.parse().unwrap()),
                 "-n" => args.next().map(|n| max_bodies = n.parse().unwrap()),
                 "-w" => args.next().map(|n| width      = n.parse().unwrap()),
                 "-h" => args.next().map(|n| height     = n.parse().unwrap()),
+                "-r" => args.next().map(|s| match s.as_str() {
+                    "360"  => { height = 360;  width = 640;  },
+                    "480"  => { height = 480;  width = 854;  },
+                    "720"  => { height = 720;  width = 1280; },
+                    "1080" => { height = 1080; width = 1920; },
+                    "1440" => { height = 1440; width = 2560; },
+                    "2160" => { height = 2160; width = 3840; },
+                    _      => panic!("unknown resolution: {}", s),
+                }),
                 _    => continue,
             };
         }
-        (vsync, max_bodies, width, height)
+        (vsync, msaa, max_bodies, width, height)
     };
     let aspect     = width as f32 / height as f32;
     if max_bodies <= 0   { panic!("max bodies must be greater than 0"); }
@@ -268,13 +280,15 @@ fn main() {
         .with_title("lemon")
         .with_resizable(false);
     let windowed_context = ContextBuilder::new()
-        .with_multisampling(2)
+        .with_multisampling(msaa)
         .with_vsync(vsync)
         .build_windowed(window, &events_loop)
         .unwrap();
 
     unsafe { windowed_context.make_current().unwrap(); }
     gl::load_with(|symbol| windowed_context.get_proc_address(symbol) as *const _);
+
+    let hidpi_factor = windowed_context.get_hidpi_factor() as Real;
 
     let sleep_resolution_ms = if cfg!(windows) {
         let mut sleep_resolution_ms = 1;
@@ -558,6 +572,7 @@ fn main() {
 
     let mut mouse_pixel    = point2!(VEC2_0);
     let mut mouse_pos      = point2!(-1.0, 1.0);
+    let mut mouse_prev_pos = point2!(-1.0, 1.0);
     let mut mouse_movement = VEC2_0;
 
     let mut mouse_down     = false;
@@ -584,6 +599,7 @@ fn main() {
         mouse_released = false;
         mouse_clicked  = false;
         mouse_movement = VEC2_0;
+        mouse_prev_pos = mouse_pos;
 
         // POLL INPUT
         let mut exit = false;
@@ -621,9 +637,8 @@ fn main() {
                             (mouse_pixel.x * 2.0) as f32 / width  as f32 - 1.0,
                             (mouse_pixel.y *-2.0) as f32 / height as f32 + 1.0,
                         );
-                        mouse_movement         = mouse_pos_new - mouse_pos;
-                        mouse_pos              = mouse_pos_new;
 
+                        mouse_pos              = mouse_pos_new;
                         mouse_dragging        |= mouse_down && !mouse_pressed;
                         camera_needs_update   |= mouse_dragging;
                         mouse_ray_needs_update = true;
@@ -772,6 +787,7 @@ fn main() {
             _ => (),
         });
         if exit { break 'main; }
+        mouse_movement = mouse_pos - mouse_prev_pos;
 
         // STEP THROUGH FRAMES WHILE PAUSED
         if debug_pause && debug_frame_step != 0 && debug_frame_store.len() > 0 {
@@ -808,9 +824,9 @@ fn main() {
         camera_needs_update |= !camera_lerp.is_nan();
         if camera_needs_update {
             if dragging_lemon!(!0) {
-                camera_azimuth   -= (180.0 * mouse_movement.x * aspect).to_radians();
+                camera_azimuth   -= TAU/5.0 * mouse_movement.x * aspect;
 
-                camera_elevation -= (180.0 * mouse_movement.y).to_radians();
+                camera_elevation -= TAU/5.0 * mouse_movement.y;
                 camera_elevation  = camera_elevation.min(85.0_f32.to_radians());
                 camera_elevation  = camera_elevation.max(-85.0_f32.to_radians());
             }

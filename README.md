@@ -47,8 +47,10 @@ In-development interactive toy, written in Rust. Exists for me to practice, deve
 
 ### Command line options
 - `-n` `maximum number of lemons` (default: 256)
-- `-w` `window width` `-h` `window height` (default: 1280x720)
+- `-r` [`360`|`480`|`720`|`1080`|`1440`|`2160`] (common resolutions - default: 720)
+- `-w` `custom window width` `-h` `custom window height` (default: 1280x720)
 - `-v` [`true`|`false`] (enable vsync - default: false)
+- `-m` `multisampling level` (default: 2)
 
 ## Current Features
 - Simple rigidbody dynamics simulation
