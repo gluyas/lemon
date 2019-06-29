@@ -505,6 +505,9 @@ fn main() {
     let mut lemon_interact_index:   usize = 0;
     let mut lemon_drag_offset:      Vec3  = VEC3_0;
     let mut lemon_drag_plane:       Plane = Plane::new(VEC3_0, 0.0);
+    unsafe {
+        gl::Uniform1i(u_selection_instance_id, lemon_selection_index as _);
+    }
 
     let mut debug            = DebugRender::new();
     let mut debug_depth_test = DebugRender::with_shared_context(&debug);
@@ -750,6 +753,7 @@ fn main() {
                         } else {
                             if lemon_selection_index < lemons.len() {
                                 reset_lemon(&mut lemons[lemon_selection_index]);
+                                lemon_selection_anim = 0.0;
                                 camera_lerp_origin = camera_lerp_point;
                                 camera_lerp        = 0.25;
                             } else {
