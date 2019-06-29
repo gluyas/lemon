@@ -4,6 +4,9 @@ extern crate glutin;
 extern crate cgmath;
 extern crate rand;
 
+#[cfg(windows)]
+extern crate winapi;
+
 macro_rules! vec4 {
     () => {
         Vec4 { x:zero(), y:zero(), z:zero(), w:zero() }
@@ -136,6 +139,12 @@ use crate::debug_ui::{DebugUi, Histogram};
 
 use glutin::*;
 
+#[cfg(windows)]
+use winapi::um::{
+    mmsystem::{TIMERR_NOERROR, TIMERR_NOCANDO},
+    timeapi::{timeBeginPeriod, timeEndPeriod},
+};
+
 use rand::random;
 
 use cgmath::{*, num_traits::{zero, one}};
@@ -224,12 +233,14 @@ const CAMERA_HEIGHT_FACTOR:  f32 = 0.6;
 const CAMERA_HEIGHT_DEFAULT: f32 = CAMERA_HEIGHT_BASE + 1.0 * CAMERA_HEIGHT_FACTOR;
 const CAMERA_LERP_TIME:      f32 = 0.3;
 
+const DEFAULT_VSYNC:      bool  = false;
 const DEFAULT_MAX_BODIES: usize = 256;
 const DEFAULT_WIDTH:      usize = 1280;
 const DEFAULT_HEIGHT:     usize = 720;
 
 fn main() {
-    let (max_bodies, width, height) = {
+    let (vsync, max_bodies, width, height) = {
+        let mut vsync      = DEFAULT_VSYNC;
         let mut max_bodies = DEFAULT_MAX_BODIES;
         let mut width      = DEFAULT_WIDTH;
         let mut height     = DEFAULT_HEIGHT;
@@ -237,13 +248,14 @@ fn main() {
         let mut args = std::env::args();
         while let Some(arg) = args.next() {
             match arg.as_str() {
+                "-v" => args.next().map(|b| vsync      = b.parse().unwrap()),
                 "-n" => args.next().map(|n| max_bodies = n.parse().unwrap()),
                 "-w" => args.next().map(|n| width      = n.parse().unwrap()),
                 "-h" => args.next().map(|n| height     = n.parse().unwrap()),
                 _    => continue,
             };
         }
-        (max_bodies, width, height)
+        (vsync, max_bodies, width, height)
     };
     let aspect     = width as f32 / height as f32;
     if max_bodies <= 0   { panic!("max bodies must be greater than 0"); }
@@ -257,11 +269,23 @@ fn main() {
         .with_resizable(false);
     let windowed_context = ContextBuilder::new()
         .with_multisampling(2)
+        .with_vsync(vsync)
         .build_windowed(window, &events_loop)
         .unwrap();
 
     unsafe { windowed_context.make_current().unwrap(); }
     gl::load_with(|symbol| windowed_context.get_proc_address(symbol) as *const _);
+
+    let sleep_resolution_ms = if cfg!(windows) {
+        let mut sleep_resolution_ms = 1;
+        while unsafe { timeBeginPeriod(sleep_resolution_ms) } == TIMERR_NOCANDO {
+            sleep_resolution_ms += 1;
+            if sleep_resolution_ms > 16 { break; }
+        }
+        sleep_resolution_ms
+    } else {
+        1 // TODO: implement actual logic for non-windows platforms
+    };
 
     #[repr(C)]
     struct Camera {
@@ -495,7 +519,7 @@ fn main() {
     let debug_histogram_height:      usize = height / 3;
     let debug_histogram_bar_width:   usize = 2;
     let debug_histogram_bar_spacing: usize = 0;
-    let debug_histogram_nano_per_px: u32   = FRAME_DURATION.subsec_nanos()
+    let debug_histogram_nano_per_px: u32   = 5 * FRAME_DURATION.subsec_nanos() / 4
                                            / debug_histogram_height as u32;
     let mut debug_histogram                = Histogram::new(
         (width - debug_histogram_width) as isize, (height / 16) as isize,
@@ -550,11 +574,10 @@ fn main() {
                        && $lemon_index == lemon_interact_index
     }; }
 
+    let mut frame_sync_time = Instant::now();
+
     let mut window_in_focus = false;
     'main: loop {
-        let frame_start_time = Instant::now();
-        assert!(debug_histogram.is_buffer_empty(), "dirty histogram buffer at start of frame");
-
         // RESET PER-FRAME VARIABLES
         // mouse input
         mouse_pressed  = false;
@@ -853,7 +876,7 @@ fn main() {
         }
 
         debug_histogram.add_bar_segment("input processing, camera update",
-            short_color(31, 31, 31, true), get_histogram_bar_height(frame_start_time.elapsed()),
+            short_color(31, 31, 31, true), get_histogram_bar_height(frame_sync_time.elapsed()),
         );
 
         // MOUSE DRAG LEMONS (LEMON INTERACTION part 1 / 2)
@@ -1131,7 +1154,7 @@ fn main() {
         }
 
         debug_histogram.add_bar_segment("rigidbody integration, static collisions",
-            short_color(31, 31, 0, true), get_histogram_bar_height(frame_start_time.elapsed()),
+            short_color(31, 31, 0, true), get_histogram_bar_height(frame_sync_time.elapsed()),
         );
 
         // DYNAMIC OBJECT COLLISIONS
@@ -1207,7 +1230,7 @@ fn main() {
             }
         }
         debug_histogram.add_bar_segment("dynamic collisions",
-            short_color(31, 15, 0, true), get_histogram_bar_height(frame_start_time.elapsed()),
+            short_color(31, 15, 0, true), get_histogram_bar_height(frame_sync_time.elapsed()),
         );
 
         // RENDER SCENE
@@ -1241,43 +1264,62 @@ fn main() {
             }
         }
         debug_histogram.add_bar_segment("draw calls",
-            short_color(0, 31, 0, true), get_histogram_bar_height(frame_start_time.elapsed()),
+            short_color(0, 31, 0, true), get_histogram_bar_height(frame_sync_time.elapsed()),
         );
 
-        windowed_context.swap_buffers().expect("buffer swap failed");
-        debug_histogram.add_bar_segment("buffer swap",
-            short_color(0, 31, 31, true),
-            get_histogram_bar_height(frame_start_time.elapsed()),
-        );
-
-        // AWAIT NEXT FRAME
-        if !debug_spin_between_frames {
-            let remaining_time = FRAME_DURATION.checked_sub(frame_start_time.elapsed());
-            if let Some(sleep_duration) = remaining_time {
-                thread::sleep(sleep_duration);
+        // SYNCHRONISE BUFFER SWAP CALL
+        let frame_expected_sync_time = frame_sync_time + FRAME_DURATION;
+        let frame_sleep_start_time   = Instant::now();
+        let frame_sleep_end_time     = if !debug_spin_between_frames
+                                       && frame_sleep_start_time < frame_expected_sync_time
+        {
+            let remaining_ms  = (frame_expected_sync_time - frame_sleep_start_time)
+                                .subsec_millis();
+            let sleep_time_ms = remaining_ms as i32 - sleep_resolution_ms as i32
+                              - (remaining_ms % sleep_resolution_ms) as i32;
+            if sleep_time_ms > 0 {
+                thread::sleep(Duration::from_millis(sleep_time_ms as u64));
             }
+            Instant::now()
         } else {
-            while frame_start_time.elapsed() < FRAME_DURATION { }
+            frame_sleep_start_time
+        };
+        if frame_sleep_end_time < frame_expected_sync_time {
+            while Instant::now() < frame_expected_sync_time { /* spin remaining time */ }
         }
-        if !debug_pause { debug_frame_current += 1; }
 
-        // ADVANCE HISTOGRAM FOR DISPLAY NEXT FRAME
+        // SWAP BUFFERS AND RECORD NEXT FRAME SYNC TIME
+        let frame_next_sync_time   = Instant::now();
+        windowed_context.swap_buffers().expect("buffer swap failed");
+        let frame_buffer_swap_time = Instant::now();
+
+        // LOG SWAP TIMING AND ADVANCE HISTOGRAM FOR DISPLAY NEXT FRAME
         if debug_histogram_logging {
-            let wakeup_mark = get_histogram_bar_height(frame_start_time.elapsed());
-            debug_histogram.add_bar_segment("frame sleep",
-                0, debug_histogram_height.min(wakeup_mark),
-            );
-            if wakeup_mark < debug_histogram_height {
-                debug_histogram.add_bar_segment("frame sleep defecit",
-                    short_color(0, 0, 31, true), debug_histogram_height,
-                );
-            } else {
-                debug_histogram.add_bar_segment("frame sleep excess",
-                    short_color(31, 0, 0, true), wakeup_mark,
-                );
+            if frame_sleep_start_time != frame_sleep_end_time {
+                if frame_sleep_end_time < frame_expected_sync_time {
+                    debug_histogram.add_bar_segment("thread sleep",
+                        short_color(0, 0, 0, false),
+                        get_histogram_bar_height(frame_sleep_end_time - frame_sync_time),
+                    );
+                    debug_histogram.add_bar_segment("thread sleep defecit",
+                        short_color(0, 0, 31, true),
+                        get_histogram_bar_height(frame_next_sync_time - frame_sync_time),
+                    );
+                } else {
+                    debug_histogram.add_bar_segment("thread sleep",
+                        short_color(0, 0, 0, false),
+                        get_histogram_bar_height(FRAME_DURATION),
+                    );
+                    debug_histogram.add_bar_segment("thread sleep excess",
+                        short_color(31, 0, 0, true),
+                        get_histogram_bar_height(frame_sleep_end_time - frame_sync_time),
+                    );
+                }
             }
-            debug_histogram.add_line("expected frame duration",
-                short_color(0, 0, 0, true), debug_histogram_height - 1,
+
+            debug_histogram.add_line("frame sync point",
+                short_color(0, 0, 0, true),
+                get_histogram_bar_height(FRAME_DURATION),
             );
             debug_histogram.render_and_flush_buffer(
                 debug_histogram_bar_width, debug_histogram_bar_spacing
@@ -1285,7 +1327,17 @@ fn main() {
         } else {
             debug_histogram.clear_buffer();
         }
+
+        debug_histogram.add_bar_segment("buffer swap",
+            short_color(0, 31, 31, true),
+            get_histogram_bar_height(frame_buffer_swap_time - frame_next_sync_time),
+        );
+
+        // SET NEXT FRAME SYNC TIME
+        frame_sync_time  = frame_next_sync_time;
     }
+
+    #[cfg(windows)] unsafe { timeEndPeriod(sleep_resolution_ms); }
 }
 
 fn clamp01(t: f32) -> f32 {

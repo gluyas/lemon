@@ -13,3 +13,6 @@ glutin = "0.20"
 cgmath = "0.17"
 rand = "0.6"
 bitflags = "1.0"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["mmsystem", "timeapi",] }

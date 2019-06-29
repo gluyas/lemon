@@ -43,11 +43,12 @@ In-development interactive toy, written in Rust. Exists for me to practice, deve
 | Key | Default | Modifiers | Program Setting |
 | :-: | :-----: | :-------: | --------------- |
 | `J` | Enable | `Ctrl`: Disable | Histogram data logging |
-| `T` | Sleep | `Ctrl`: Spin | Thread waiting method between frames |
+| `T` | Sleep-then-spin | `Ctrl`: Spin only | Frame timing method |
 
 ### Command line options
 - `-n` `maximum number of lemons` (default: 256)
 - `-w` `window width` `-h` `window height` (default: 1280x720)
+- `-v` [`true`|`false`] (enable vsync - default: false)
 
 ## Current Features
 - Simple rigidbody dynamics simulation
@@ -92,3 +93,4 @@ In-development interactive toy, written in Rust. Exists for me to practice, deve
 - https://www.gameenginebook.com
 - https://gafferongames.com/post/collision_response_and_coulomb_friction
 - https://www.sciencedirect.com/science/article/pii/S0307904X0200080X
+- https://medium.com/@tglaiel/how-to-make-your-game-run-at-60fps-24c61210fe75
