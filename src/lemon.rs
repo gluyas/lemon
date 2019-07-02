@@ -204,14 +204,15 @@ pub fn make_radius_normal_z_map() -> Vec<[Vec2; MAP_RESOLUTION]> {
         let s     = (i_s+1) as Real / MAP_RESOLUTION as Real;
         let lemon = NormalizedLemon::new(s);
 
-        for i_z in 0..(MAP_RESOLUTION-1) {
+        for i_z in 0..MAP_RESOLUTION {
             // sqrt here to effectively increase sample density as z -> 1.
             // has a corresponding square in lemon vertex shader.
             let z = (i_z as Real / (MAP_RESOLUTION - 1) as Real).sqrt();
             let (radius, gradient) = lemon.eval_radius_gradient(z);
             tex[i_s][i_z] = vec2!(radius, -gradient);
         }
-        tex[i_s][MAP_RESOLUTION-1] = vec2!(0.0, f32::MIN);
+        tex[i_s][0               ].x = s;
+        tex[i_s][MAP_RESOLUTION-1].x = 0.0;
     }
     tex
 }

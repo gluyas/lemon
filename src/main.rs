@@ -389,7 +389,7 @@ fn main() {
         let radius_normal_z_map = lemon::make_radius_normal_z_map();
         gl::TexImage2D(
             gl::TEXTURE_2D, 0,
-            gl::RG as _, lemon::MAP_RESOLUTION as _, lemon::MAP_RESOLUTION as _, 0,
+            gl::RG32F as _, lemon::MAP_RESOLUTION as _, lemon::MAP_RESOLUTION as _, 0,
             gl::RG, gl::FLOAT, radius_normal_z_map.as_ptr() as *const GLvoid,
         );
         gl::GenerateMipmap(gl::TEXTURE_2D);
