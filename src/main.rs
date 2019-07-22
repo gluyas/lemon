@@ -275,20 +275,20 @@ fn main() {
     if height     <= 127 { panic!("window height must be greater than 127"); }
 
     let mut events_loop = EventsLoop::new();
-    let window = WindowBuilder::new()
-        .with_dimensions(dpi::LogicalSize::new(width as _, height as _))
-        .with_title("lemon")
-        .with_resizable(false);
-    let windowed_context = ContextBuilder::new()
-        .with_multisampling(msaa)
-        .with_vsync(vsync)
-        .build_windowed(window, &events_loop)
-        .unwrap();
+    let windowed_context = {
+        let window = WindowBuilder::new()
+            .with_dimensions(dpi::LogicalSize::new(width as _, height as _))
+            .with_title("lemon")
+            .with_resizable(false);
 
-    unsafe { windowed_context.make_current().unwrap(); }
+        let mut windowed_context = ContextBuilder::new()
+            .with_multisampling(msaa)
+            .with_vsync(vsync)
+            .build_windowed(window, &events_loop)
+            .unwrap();
+        unsafe { windowed_context.make_current().unwrap() }
+    };
     gl::load_with(|symbol| windowed_context.get_proc_address(symbol) as *const _);
-
-    let hidpi_factor = windowed_context.get_hidpi_factor() as Real;
 
     let sleep_resolution_ms = if cfg!(windows) {
         let mut sleep_resolution_ms = 1;
