@@ -4,7 +4,7 @@ extern crate glutin;
 extern crate cgmath;
 extern crate rand;
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 extern crate winapi;
 
 macro_rules! vec4 {
@@ -119,6 +119,9 @@ pub const fn short_color(r: u16, g: u16, b: u16, a: bool) -> u16 {
 mod gl;
 use crate::gl::types::*;
 
+mod render;
+use crate::render::{Camera, Render};
+
 mod jagged;
 use crate::jagged::Jagged;
 
@@ -139,7 +142,7 @@ use crate::debug_ui::{DebugUi, Histogram};
 
 use glutin::*;
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 use winapi::um::{
     mmsystem::{TIMERR_NOERROR, TIMERR_NOCANDO},
     timeapi::{timeBeginPeriod, timeEndPeriod},
@@ -290,8 +293,9 @@ fn main() {
     };
     gl::load_with(|symbol| windowed_context.get_proc_address(symbol) as *const _);
 
-    let sleep_resolution_ms = if cfg!(windows) {
+    let sleep_resolution_ms = if cfg!(target_os = "windows") {
         let mut sleep_resolution_ms = 1;
+        #[cfg(target_os = "windows")]
         while unsafe { timeBeginPeriod(sleep_resolution_ms) } == TIMERR_NOCANDO {
             sleep_resolution_ms += 1;
             if sleep_resolution_ms > 16 { break; }
@@ -301,162 +305,11 @@ fn main() {
         1 // TODO: implement actual logic for non-windows platforms
     };
 
-    #[repr(C)]
-    struct Camera {
-        view:       Mat4,
-        projection: Mat4,
+    let mut render = Render::init(max_bodies);
 
-        position: Point3,
-    };
-
-    let (mut camera, camera_ubo, camera_binding_index) = unsafe {
-        let mut camera = Camera {
-            view:       mat4!(1.0),
-            projection: mat4!(1.0),
-
-            position: point3!(),
-        };
-
-        let camera_ubo = gl::gen_object(gl::GenBuffers);
-        gl::BindBuffer(gl::UNIFORM_BUFFER, camera_ubo);
-        gl::buffer_init::<Camera>(gl::UNIFORM_BUFFER, 1, gl::DYNAMIC_DRAW);
-
-        let camera_binding_index: GLuint = 1;
-        gl::BindBufferBase(gl::UNIFORM_BUFFER, camera_binding_index, camera_ubo);
-
-        (camera, camera_ubo, camera_binding_index)
-    };
-
-    let (
-        vao, base_mesh,
-        vbo_transform, vbo_lemon_s, vbo_lemon_color,
-        u_selection_instance_id, u_selection_glow,
-        u_hover_instance_id, u_hover_glow,
-    ) = unsafe {
-        let program = gl::link_shaders(&[
-            gl::compile_shader(include_str!("shader/lemon.vert.glsl"), gl::VERTEX_SHADER),
-            gl::compile_shader(include_str!("shader/lemon.frag.glsl"), gl::FRAGMENT_SHADER),
-        ]);
-        gl::UseProgram(program);
-
-        let camera_index = gl::GetUniformBlockIndex(program, cstr!("Camera"));
-        gl::UniformBlockBinding(program, camera_index, camera_binding_index);
-
-        let u_ambient_color = gl::GetUniformLocation(program, cstr!("u_ambient_color"));
-        gl::Uniform4fv(u_ambient_color, 1, as_ptr(&BACK_COLOR));
-
-        let u_selection_instance_id = gl::GetUniformLocation(program, cstr!("u_selection_instance_id"));
-        gl::Uniform1i(u_selection_instance_id, !0);
-
-        let u_selection_glow = gl::GetUniformLocation(program, cstr!("u_selection_glow"));
-        gl::Uniform1f(u_selection_glow, 0.0);
-
-        let u_hover_instance_id = gl::GetUniformLocation(program, cstr!("u_hover_instance_id"));
-        gl::Uniform1i(u_hover_instance_id, !0);
-
-        let u_hover_glow = gl::GetUniformLocation(program, cstr!("u_hover_glow"));
-        gl::Uniform1f(u_hover_glow, 0.0);
-
-/*
-        let txo_normal_map = gl::gen_object(gl::GenTextures);
-        let normal_map = vec![vec3!(); 1024];
-        gl::ActiveTexture(gl::TEXTURE0);
-        gl::BindTexture(gl::TEXTURE_2D, txo_normal_map);
-
-        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR as _);
-        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as _);
-
-        let mut max_anisotropy = 0.0;
-        gl::GetFloatv(gl::MAX_TEXTURE_MAX_ANISOTROPY_EXT, &mut max_anisotropy);
-        gl::TexParameterf(gl::TEXTURE_2D, gl::TEXTURE_MAX_ANISOTROPY_EXT, max_anisotropy);
-
-        gl::TexImage2D(
-            gl::TEXTURE_2D, 0,
-            gl::RGB8_SNORM as _, LEMON_TEX_SIZE as GLsizei, LEMON_TEX_SIZE as GLsizei, 0,
-            gl::RGB, gl::FLOAT, normal_map.as_ptr() as *const GLvoid,
-        );
-        gl::GenerateMipmap(gl::TEXTURE_2D);
-        let u_normal_map = gl::GetUniformLocation(program, cstr!("u_normal_map"));
-        gl::Uniform1i(u_normal_map, 0);
-*/
-        let txo_radius_normal_z_atlas = gl::gen_object(gl::GenTextures);
-        gl::ActiveTexture(gl::TEXTURE0);
-        gl::BindTexture(gl::TEXTURE_2D, txo_radius_normal_z_atlas);
-
-        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as _);
-        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as _);
-
-        let radius_normal_z_map = lemon::make_radius_normal_z_map();
-        gl::TexImage2D(
-            gl::TEXTURE_2D, 0,
-            gl::RG32F as _, lemon::MAP_RESOLUTION as _, lemon::MAP_RESOLUTION as _, 0,
-            gl::RG, gl::FLOAT, radius_normal_z_map.as_ptr() as *const GLvoid,
-        );
-        gl::GenerateMipmap(gl::TEXTURE_2D);
-        let u_radius_normal_z_map = gl::GetUniformLocation(program,
-            cstr!("u_radius_normal_z_map")
-        );
-        gl::Uniform1i(u_radius_normal_z_map, 0);
-
-        let vao = gl::gen_object(gl::GenVertexArrays);
-        gl::BindVertexArray(vao);
-
-        let base_mesh = lemon::make_base_mesh();
-
-        // PER-INSTANCE ATTRIBUTES
-        let a_transform    = gl::GetAttribLocation(program, cstr!("a_transform")) as GLuint;
-        let vbo_transform = gl::gen_object(gl::GenBuffers);
-        gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transform);
-        gl::buffer_init::<Mat4>(gl::ARRAY_BUFFER, max_bodies, gl::STREAM_DRAW);
-        for i in 0..4 { // all 4 column vectors
-            let a_transform_i = a_transform + i as GLuint;
-            gl::EnableVertexAttribArray(a_transform_i);
-            gl::VertexAttribPointer(
-                a_transform_i , 4, gl::FLOAT, gl::FALSE,
-                mem::size_of::<Mat4>() as GLsizei,
-                ptr::null::<f32>().offset(4 * i) as *const GLvoid,
-            );
-            gl::VertexAttribDivisor(a_transform_i, 1);
-        }
-
-        let a_lemon_s   = gl::GetAttribLocation(program, cstr!("a_lemon_s")) as GLuint;
-        let vbo_lemon_s = gl::gen_object(gl::GenBuffers);
-        gl::BindBuffer(gl::ARRAY_BUFFER, vbo_lemon_s);
-        gl::buffer_init::<f32>(gl::ARRAY_BUFFER, max_bodies, gl::DYNAMIC_DRAW);
-        gl::EnableVertexAttribArray(a_lemon_s);
-        gl::VertexAttribPointer(a_lemon_s, 1, gl::FLOAT, gl::FALSE, 0, 0 as *const GLvoid);
-        gl::VertexAttribDivisor(a_lemon_s, 1);
-
-        let a_lemon_color   = gl::GetAttribLocation(program, cstr!("a_lemon_color")) as GLuint;
-        let vbo_lemon_color = gl::gen_object(gl::GenBuffers);
-        gl::BindBuffer(gl::ARRAY_BUFFER, vbo_lemon_color);
-        gl::buffer_init::<Vec3>(gl::ARRAY_BUFFER, max_bodies, gl::DYNAMIC_DRAW);
-        gl::EnableVertexAttribArray(a_lemon_color);
-        gl::VertexAttribPointer(a_lemon_color, 3, gl::FLOAT, gl::FALSE, 0, 0 as *const GLvoid);
-        gl::VertexAttribDivisor(a_lemon_color, 1);
-
-        // PER-VERTEX ATTRIBUTES
-        let a_position   = gl::GetAttribLocation(program, cstr!("a_position")) as GLuint;
-        let vbo_position = gl::gen_object(gl::GenBuffers);
-        gl::BindBuffer(gl::ARRAY_BUFFER, vbo_position);
-        gl::buffer_data(gl::ARRAY_BUFFER, &base_mesh.points, gl::STATIC_DRAW);
-        gl::EnableVertexAttribArray(a_position);
-        gl::VertexAttribPointer(a_position, 3, gl::FLOAT, gl::FALSE, 0, 0 as *const GLvoid);
-
-        let ebo = gl::gen_object(gl::GenBuffers);
-        gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, ebo);
-        gl::buffer_data(gl::ELEMENT_ARRAY_BUFFER, &base_mesh.indices, gl::STATIC_DRAW);
-
-        (
-            vao, base_mesh,
-            vbo_transform, vbo_lemon_s, vbo_lemon_color,
-            u_selection_instance_id, u_selection_glow,
-            u_hover_instance_id, u_hover_glow,
-        )
-    };
-
-    let mut lemons = Vec::with_capacity(max_bodies);
-    let spawn_lemon = |lemons: &mut Vec<Lemon>| {
+    let mut lemons           = Vec::<Lemon>::with_capacity(max_bodies);
+    let mut lemon_transforms = vec![mat4!(0.0); max_bodies].into_boxed_slice();
+    let spawn_lemon = |render: &mut Render, lemons: &mut Vec<Lemon>| {
         if lemons.len() >= max_bodies { return; }
 
         let scale = LEMON_SCALE_MIN + (LEMON_SCALE_MAX-LEMON_SCALE_MIN) * random::<f32>();
@@ -466,21 +319,7 @@ fn main() {
         let color       = LEMON_COLORS[color_index.floor() as usize].truncate();
 
         let mut new_lemon = Lemon::new(s, scale);
-        unsafe {
-            gl::BindBuffer(gl::ARRAY_BUFFER, vbo_lemon_s);
-            gl::buffer_sub_data(
-                gl::ARRAY_BUFFER,
-                lemons.len(),
-                slice::from_ref(&s),
-            );
-
-            gl::BindBuffer(gl::ARRAY_BUFFER, vbo_lemon_color);
-            gl::buffer_sub_data(
-                gl::ARRAY_BUFFER,
-                lemons.len(),
-                slice::from_ref(&color),
-            );
-        }
+        render.update_lemon(lemons.len(), Some(&s), Some(&color), None);
 
         reset_lemon(&mut new_lemon);
         lemons.push(new_lemon);
@@ -495,7 +334,7 @@ fn main() {
                                     * (random::<Vec3>() - vec3!(0.5, 0.5, 0.5)) * 2.0
                                     * TAU / 5.0 / SECOND;
     }
-    spawn_lemon(&mut lemons);
+    spawn_lemon(&mut render, &mut lemons);
     let mut lemon_selection_index:  usize = 0;
     let mut lemon_selection_anim:   Real  = 0.0;
     let mut lemon_hover_index:      usize = !0;
@@ -505,9 +344,7 @@ fn main() {
     let mut lemon_interact_index:   usize = 0;
     let mut lemon_drag_offset:      Vec3  = VEC3_0;
     let mut lemon_drag_plane:       Plane = Plane::new(VEC3_0, 0.0);
-    unsafe {
-        gl::Uniform1i(u_selection_instance_id, lemon_selection_index as _);
-    }
+    render.update_selection(Some(lemon_selection_index), None);
 
     let mut debug            = DebugRender::new();
     let mut debug_depth_test = DebugRender::with_shared_context(&debug);
@@ -562,6 +399,7 @@ fn main() {
     let mut debug_pause                   = false;
     let mut debug_pause_next_frame        = false;
 
+    let mut camera              = Camera::default();
     let mut camera_fovy         = 30.0_f32.to_radians();
     let mut camera_distance     = 9.0_f32;
     let mut camera_elevation    = 0.0_f32.to_radians();
@@ -663,12 +501,7 @@ fn main() {
                             let normalized = lemons[lemon_selection_index].get_normalized();
                             let new_s      = normalized.s + delta_y * 0.01;
                             if new_s >= 0.15 && new_s <= 0.95 {
-                                unsafe {
-                                    gl::BindBuffer(gl::ARRAY_BUFFER, vbo_lemon_s);
-                                    gl::buffer_sub_data(gl::ARRAY_BUFFER,
-                                        lemon_selection_index, slice::from_ref(&normalized.s)
-                                    );
-                                }
+                                render.update_lemon(lemon_selection_index, Some(&normalized.s), None, None);
                                 debug_frame_store_clear!();
                                 Some(new_s)
                             } else { None }
@@ -749,7 +582,7 @@ fn main() {
                     },
                     VirtualKeyCode::Space => if let ElementState::Pressed = state {
                         if modifiers.ctrl {
-                            spawn_lemon(&mut lemons);
+                            spawn_lemon(&mut render, &mut lemons);
                         } else {
                             if lemon_selection_index < lemons.len() {
                                 reset_lemon(&mut lemons[lemon_selection_index]);
@@ -877,12 +710,9 @@ fn main() {
                 VEC3_Z,
             );
 
+            render.update_camera(&camera);
             debug.update_camera(&(camera.projection * camera.view));
 
-            unsafe {
-                gl::BindBuffer(gl::UNIFORM_BUFFER, camera_ubo);
-                gl::buffer_data(gl::UNIFORM_BUFFER, slice::from_ref(&camera), gl::DYNAMIC_DRAW);
-            }
             mouse_ray_needs_update = true;
             camera_needs_update    = false;
         }
@@ -948,12 +778,7 @@ fn main() {
                     if next_lsb { lemon.sagitta.to_bits() | LSB_MASK }
                     else        { lemon.sagitta.to_bits() &!LSB_MASK }
                 );
-                unsafe {
-                    gl::BindBuffer(gl::ARRAY_BUFFER, vbo_lemon_s);
-                    gl::buffer_sub_data(gl::ARRAY_BUFFER,
-                        lemon_index, slice::from_ref(&normalized.s)
-                    );
-                }
+                render.update_lemon(lemon_index, Some(&normalized.s), None, None);
             }
 
             // INTEGRATE RIGIDBODIES
@@ -1067,16 +892,8 @@ fn main() {
                 ));
             }
 
-            // UPLOAD TRANSFORM DATA
-            // TODO: upload transforms in a single batch
-            unsafe {
-                gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transform);
-                gl::buffer_sub_data(
-                    gl::ARRAY_BUFFER,
-                    lemon_index,
-                    slice::from_ref(&lemon.get_transform_with_scale()),
-                );
-            }
+            // UPDATE TRANSFORM DATA
+            lemon_transforms[lemon_index] = lemon.get_transform_with_scale();
         }
 
         if debug_lemon_party {
@@ -1088,12 +905,9 @@ fn main() {
         // UPDATE LEMON SELECTION AND PULSE EFFECTS (LEMON INTERACTION part 2 / 2)
         if mouse_pressed {
             // set candidate for dragging or selection
-            unsafe {
-                gl::Uniform1i(u_hover_instance_id, lemon_hover_index as _);
-                gl::Uniform1f(u_hover_glow, 0.6);
-            }
             lemon_interact_index     = lemon_hover_index;
             lemon_hover_needs_update = false;
+            render.update_hover(Some(lemon_hover_index), Some(0.6));
         }
         if mouse_released {
             if mouse_clicked && lemon_interact_index == lemon_hover_index {
@@ -1119,9 +933,7 @@ fn main() {
                 }
                 lemon_selection_index = lemon_interact_index;
                 lemon_selection_anim  = 0.0;
-                unsafe {
-                    gl::Uniform1i(u_selection_instance_id, lemon_selection_index as _);
-                }
+                render.update_selection(Some(lemon_selection_index), None);
             }
             lemon_hover_needs_update = true;
         }
@@ -1140,18 +952,13 @@ fn main() {
                 } else {
                     // cancel hover
                     lemon_hover_index = !0;
-                    unsafe {
-                        gl::Uniform1i(u_hover_instance_id, !0);
-                    }
+                    render.update_hover(Some(!0), None);
                 }
             }
         } else {
             // no mouse button input: set highlight to lemon under cursor
             if lemon_hover_index != lemon_hover_prev_index || mouse_released {
-                unsafe {
-                    gl::Uniform1i(u_hover_instance_id, lemon_hover_index as _);
-                    gl::Uniform1f(u_hover_glow, 0.3);
-                }
+                render.update_hover(Some(lemon_hover_index), Some(0.3));
             }
         }
 
@@ -1167,9 +974,7 @@ fn main() {
                 lemon_selection_anim = NAN;
                 MIN
             };
-            unsafe {
-                gl::Uniform1f(u_selection_glow, glow);
-            }
+            render.update_selection(None, Some(glow));
             lemon_selection_anim += FRAME_DELTA_TIME / LEN;
         }
 
@@ -1233,19 +1038,12 @@ fn main() {
                             );
                         }
                     }
-                    if !debug_pause { unsafe {
-                        gl::BindBuffer(gl::ARRAY_BUFFER, vbo_transform);
-                        gl::buffer_sub_data(
-                            gl::ARRAY_BUFFER,
-                            lemon_index,
-                            slice::from_ref(&lemon.get_transform_with_scale()),
-                        );
-                        gl::buffer_sub_data(
-                            gl::ARRAY_BUFFER,
-                            other_index,
-                            slice::from_ref(&other.get_transform_with_scale()),
-                        );
-                    } }
+
+                    // UPDATE LEMONS TRANSFORM DATA
+                    if !debug_pause {
+                        lemon_transforms[lemon_index] = lemon.get_transform_with_scale();
+                        lemon_transforms[other_index] = other.get_transform_with_scale();
+                    }
                 }
             }
         }
@@ -1264,13 +1062,8 @@ fn main() {
             gl::DepthFunc(gl::LESS);
 
             if debug_draw_wireframe { gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE); }
-            gl::DrawElementsInstanced(
-                gl::TRIANGLES,
-                base_mesh.indices.len() as GLsizei,
-                ELEMENT_INDEX_TYPE,
-                ptr::null(),
-                lemons.len() as GLsizei,
-            );
+            render.update_lemon_transforms(&lemon_transforms[0..lemons.len()]);
+            render.render_lemons(lemons.len());
             gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
 
             debug_depth_test.render_frame();
@@ -1357,7 +1150,7 @@ fn main() {
         frame_sync_time  = frame_next_sync_time;
     }
 
-    #[cfg(windows)] unsafe { timeEndPeriod(sleep_resolution_ms); }
+    #[cfg(target_os = "windows")] unsafe { timeEndPeriod(sleep_resolution_ms); }
 }
 
 fn clamp01(t: f32) -> f32 {

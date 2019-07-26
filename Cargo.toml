@@ -6,7 +6,7 @@ authors = ["Marc <marc.gluyas@gmail.com>"]
 build = "build.rs"
 
 [build-dependencies]
-gl_generator = "0.11"
+gl_generator = "0.13"
 
 [dependencies]
 glutin = "0.21"
