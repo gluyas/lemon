@@ -514,13 +514,9 @@ fn main() {
                         }
                     }
                 },
-                _ => (),
-            },
-
-            Event::DeviceEvent { event, .. } => match event {
-                DeviceEvent::Key(KeyboardInput {
+                WindowEvent::KeyboardInput{ input: KeyboardInput {
                     state, modifiers, virtual_keycode: Some(key), ..
-                }) => match key {
+                }, .. } => match key {
                     VirtualKeyCode::A => if let ElementState::Pressed = state {
                         debug_draw_axes = !debug_draw_axes;
                     },
