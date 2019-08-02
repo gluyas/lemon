@@ -1,7 +1,7 @@
 [package]
 edition = '2018'
 name = "lemon"
-version = "0.2.0"
+version = "0.2.0-web"
 authors = ["Marc <marc.gluyas@gmail.com>"]
 build = "build.rs"
 

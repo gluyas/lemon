@@ -1,13 +1,11 @@
-#version 330
+precision mediump float;
 
 uniform mat4 u_camera;
 
-in vec3 a_position;
-in vec3 a_color;
+attribute vec3 a_position;
+attribute vec3 a_color;
 
-flat out vec3 v_color;
-
-out vec4 gl_Position;
+varying vec3 v_color;
 
 void main() {
     v_color = a_color;

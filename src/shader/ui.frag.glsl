@@ -1,12 +1,14 @@
-#version 330
+precision mediump float;
 
-uniform sampler2DRect u_pixels;
+uniform sampler2D u_pixels;
 
-layout(pixel_center_integer) in vec4 gl_FragCoord;
-
-out vec4 gl_FragColor;
+varying vec2 v_uv;
 
 void main() {
-    vec4 color = texture(u_pixels, vec2(gl_FragCoord));
-    gl_FragColor = color;
+    vec4 color = texture2D(u_pixels, v_uv);
+    if (color.a == 0.0) {
+        discard;
+    } else {
+        gl_FragColor = color;
+    }
 }

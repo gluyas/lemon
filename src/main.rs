@@ -7,6 +7,28 @@ extern crate rand;
 #[cfg(target_os = "windows")]
 extern crate winapi;
 
+#[cfg(target_os = "emscripten")]
+mod emscripten {
+    pub use std::os::raw::{c_char, c_double, c_int, c_long, c_ulong, c_ushort, c_void};
+
+    pub type EM_BOOL = c_int;
+    pub type EM_UTF8 = c_char;
+    pub type EMSCRIPTEN_RESULT = c_int;
+
+    pub const EM_TRUE: EM_BOOL = 1;
+    pub const EM_FALSE: EM_BOOL = 0;
+
+    pub type em_callback_func = Option<unsafe extern "C" fn()>;
+
+    extern "C" {
+        pub fn emscripten_set_main_loop(
+            func: em_callback_func,
+            fps: c_int,
+            simulate_infinite_loop: EM_BOOL,
+        );
+    }
+}
+
 macro_rules! vec4 {
     () => {
         Vec4 { x:zero(), y:zero(), z:zero(), w:zero() }
@@ -198,7 +220,7 @@ const LEMON_COLORS: &[Vec4] = &[
     color!(0xFFFE6B_FF), // pale yellow
     color!(0xFFE74D_FF), // warm yellow
 ];
-const BACK_COLOR:  Vec4 = color!(0xA2EFEF_00);
+const BACK_COLOR:  Vec4 = color!(0xA2EFEF_FF);
 
 const LEMON_TEX_SIZE: usize = 1;
 
@@ -238,7 +260,7 @@ const CAMERA_LERP_TIME:      f32 = 0.3;
 
 const DEFAULT_VSYNC:      bool  = false;
 const DEFAULT_MSAA:       u16   = 2;
-const DEFAULT_MAX_BODIES: usize = 256;
+const DEFAULT_MAX_BODIES: usize = 128;
 const DEFAULT_WIDTH:      usize = 1280;
 const DEFAULT_HEIGHT:     usize = 720;
 
@@ -281,12 +303,9 @@ fn main() {
     let windowed_context = {
         let window = WindowBuilder::new()
             .with_dimensions(dpi::LogicalSize::new(width as _, height as _))
-            .with_title("lemon")
             .with_resizable(false);
 
         let mut windowed_context = ContextBuilder::new()
-            .with_multisampling(msaa)
-            .with_vsync(vsync)
             .build_windowed(window, &events_loop)
             .unwrap();
         unsafe { windowed_context.make_current().unwrap() }
@@ -310,7 +329,7 @@ fn main() {
     let mut lemons           = Vec::<Lemon>::with_capacity(max_bodies);
     let mut lemon_transforms = vec![mat4!(0.0); max_bodies].into_boxed_slice();
     let spawn_lemon = |render: &mut Render, lemons: &mut Vec<Lemon>| {
-        if lemons.len() >= max_bodies { return; }
+        if lemons.len() >= lemons.capacity() { return; }
 
         let scale = LEMON_SCALE_MIN + (LEMON_SCALE_MAX-LEMON_SCALE_MIN) * random::<f32>();
         let s     = LEMON_S_MIN + (LEMON_S_MAX-LEMON_S_MIN) * random::<f32>();
@@ -379,9 +398,9 @@ fn main() {
         (width - debug_histogram_width) as isize, (height / 16) as isize,
         debug_histogram_width, debug_histogram_height,
     );
-    let mut debug_histogram_logging        = true;
+    let mut debug_histogram_logging        = false;
     let mut debug_histogram_display        = false;
-    let get_histogram_bar_height = |elapsed: Duration| -> usize {
+    let get_histogram_bar_height = move |elapsed: Duration| -> usize {
         (elapsed.subsec_nanos() / debug_histogram_nano_per_px) as usize
     };
 
@@ -392,9 +411,9 @@ fn main() {
     macro_rules! debug_frame_store_clear { () => {
         debug_frame_store.clear();
         debug_frame_current = 0;
-        debug_frame_store.push_copy(&lemons);
+        //debug_frame_store.push_copy(&lemons);
     }; }
-    debug_frame_store.push_copy(&lemons);
+    //debug_frame_store.push_copy(&lemons);
 
     let mut debug_pause                   = false;
     let mut debug_pause_next_frame        = false;
@@ -432,8 +451,8 @@ fn main() {
 
     let mut frame_sync_time = Instant::now();
 
-    let mut window_in_focus = false;
-    'main: loop {
+    let mut window_in_focus = true;
+    let mut callback = Box::leak(Box::new(move || {
         // RESET PER-FRAME VARIABLES
         // mouse input
         mouse_pressed  = false;
@@ -483,35 +502,6 @@ fn main() {
                         mouse_dragging        |= mouse_down && !mouse_pressed;
                         camera_needs_update   |= mouse_dragging;
                         mouse_ray_needs_update = true;
-                    }
-                },
-                WindowEvent::MouseWheel {
-                    delta: MouseScrollDelta::LineDelta(_delta_x, delta_y), modifiers, ..
-                } => {
-                    if !(modifiers.ctrl || modifiers.alt) { // regular camera zoom
-                        camera_distance -= camera_distance * delta_y * 0.065;
-                        if camera_distance < 0.0 { camera_distance = 0.0; }
-                        camera_needs_update = true;
-                    } else if lemon_selection_index < lemons.len() {
-                        let new_scale = option_if_then(modifiers.ctrl, || {
-                            let new_scale = lemons[lemon_selection_index].scale + delta_y * 0.05;
-                            some_if(new_scale >= 0.35 && new_scale <= 2.0, new_scale)
-                        });
-                        let new_s     = option_if_then(modifiers.alt, || {
-                            let normalized = lemons[lemon_selection_index].get_normalized();
-                            let new_s      = normalized.s + delta_y * 0.01;
-                            if new_s >= 0.15 && new_s <= 0.95 {
-                                render.update_lemon(lemon_selection_index, Some(&normalized.s), None, None);
-                                debug_frame_store_clear!();
-                                Some(new_s)
-                            } else { None }
-                        });
-                        if new_scale.is_some() || new_s.is_some() {
-                            let lemon     = &mut lemons[lemon_selection_index];
-                            let new_scale = new_scale.unwrap_or(lemon.scale);
-                            let new_s     = new_s.unwrap_or_else(|| lemon.get_normalized().s);
-                            lemon.mutate_shape(new_s, new_scale);
-                        }
                     }
                 },
                 WindowEvent::KeyboardInput{ input: KeyboardInput {
@@ -566,14 +556,12 @@ fn main() {
                         debug_spin_between_frames = modifiers.ctrl;
                     },
                     VirtualKeyCode::R => if let ElementState::Pressed = state {
-                        if modifiers.ctrl && modifiers.shift {
-                            lemons.clear();
-                            debug_frame_store.clear();
-                            if lemon_selection_index != !0 {
-                                lemon_selection_index = !0;
-                                camera_target.z       = CAMERA_HEIGHT_DEFAULT;
-                                camera_lerp           = 0.0;
-                            }
+                        lemons.clear();
+                        debug_frame_store.clear();
+                        if lemon_selection_index != !0 {
+                            lemon_selection_index = !0;
+                            camera_target.z       = CAMERA_HEIGHT_DEFAULT;
+                            camera_lerp           = 0.0;
                         }
                     },
                     VirtualKeyCode::Space => if let ElementState::Pressed = state {
@@ -613,17 +601,49 @@ fn main() {
                             debug_frame_step = 0;
                         }
                     },
+                    arrow @ VirtualKeyCode::Up | arrow @ VirtualKeyCode::Down => if let ElementState::Pressed = state {
+                        let delta_y = match arrow {
+                            VirtualKeyCode::Up   => 2.0,
+                            VirtualKeyCode::Down => -2.0,
+                            _ => unreachable!(),
+                        };
+                        if !(modifiers.ctrl || modifiers.alt) { // regular camera zoom
+                            camera_distance -= camera_distance * delta_y * 0.065;
+                            if camera_distance < 0.0 { camera_distance = 0.0; }
+                            camera_needs_update = true;
+                        } else if lemon_selection_index < lemons.len() {
+                            let new_scale = option_if_then(modifiers.ctrl, || {
+                                let new_scale = lemons[lemon_selection_index].scale + delta_y * 0.05;
+                                some_if(new_scale >= 0.35 && new_scale <= 2.0, new_scale)
+                            });
+                            let new_s     = option_if_then(modifiers.alt, || {
+                                let normalized = lemons[lemon_selection_index].get_normalized();
+                                let new_s      = normalized.s + delta_y * 0.01;
+                                if new_s >= 0.15 && new_s <= 0.95 {
+                                    render.update_lemon(lemon_selection_index, Some(&normalized.s), None, None);
+                                    debug_frame_store_clear!();
+                                    Some(new_s)
+                                } else { None }
+                            });
+                            if new_scale.is_some() || new_s.is_some() {
+                                let lemon     = &mut lemons[lemon_selection_index];
+                                let new_scale = new_scale.unwrap_or(lemon.scale);
+                                let new_s     = new_s.unwrap_or_else(|| lemon.get_normalized().s);
+                                lemon.mutate_shape(new_s, new_scale);
+                            }
+                        }
+                    },
                     _ => (),
                 },
                 _ => (),
             },
             _ => (),
         });
-        if exit { break 'main; }
+        if exit { std::process::abort(); }
         mouse_movement = mouse_pos - mouse_prev_pos;
 
         // STEP THROUGH FRAMES WHILE PAUSED
-        if debug_pause && debug_frame_step != 0 && debug_frame_store.len() > 0 {
+        if false && debug_pause && debug_frame_step != 0 && debug_frame_store.len() > 0 {
             if debug_frame_step_delay == 0 || debug_frame_step_delay > FRAME_RATE / 5 {
                 let target_frame = debug_frame_current as isize + debug_frame_step;
                 if target_frame < 0 {
@@ -643,11 +663,11 @@ fn main() {
         }
 
         // UPDATE PAUSE STATE
-        if debug_pause_next_frame != debug_pause {
+        if debug_pause_next_frame != debug_pause { // don't use frame store on web
             if debug_pause {
                 debug_frame_store.truncate(debug_frame_current + 1);
             } else {
-                debug_frame_current = debug_frame_store.len() - 1;
+                //debug_frame_current = debug_frame_store.len() - 1;
             }
             debug_pause = debug_pause_next_frame;
         }
@@ -895,7 +915,7 @@ fn main() {
         if debug_lemon_party {
             debug_frame_store_clear!();
         } else if !debug_pause {
-            debug_frame_store.push_copy(&lemons);
+            //debug_frame_store.push_copy(&lemons);
         }
 
         // UPDATE LEMON SELECTION AND PULSE EFFECTS (LEMON INTERACTION part 2 / 2)
@@ -1053,14 +1073,14 @@ fn main() {
             gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
             gl::Enable(gl::DEPTH_TEST);
             gl::Enable(gl::CULL_FACE);
-            gl::Enable(gl::BLEND);
-            gl::BlendFunc(gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
+            //gl::Enable(gl::BLEND);
+            //gl::BlendFunc(gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
             gl::DepthFunc(gl::LESS);
 
-            if debug_draw_wireframe { gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE); }
+            //if debug_draw_wireframe { gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE); }
             render.update_lemon_transforms(&lemon_transforms[0..lemons.len()]);
             render.render_lemons(lemons.len());
-            gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
+            //gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
 
             debug_depth_test.render_frame();
 
@@ -1079,7 +1099,7 @@ fn main() {
         // SYNCHRONISE BUFFER SWAP CALL
         let frame_expected_sync_time = frame_sync_time + FRAME_DURATION;
         let frame_sleep_start_time   = Instant::now();
-        let frame_sleep_end_time     = if !debug_spin_between_frames
+        let frame_sleep_end_time     = if false && !debug_spin_between_frames
                                        && frame_sleep_start_time < frame_expected_sync_time
         {
             let remaining_ms  = (frame_expected_sync_time - frame_sleep_start_time)
@@ -1093,7 +1113,7 @@ fn main() {
         } else {
             frame_sleep_start_time
         };
-        if frame_sleep_end_time < frame_expected_sync_time {
+        if false && frame_sleep_end_time < frame_expected_sync_time {
             while Instant::now() < frame_expected_sync_time { /* spin remaining time */ }
         }
 
@@ -1144,6 +1164,24 @@ fn main() {
 
         // SET NEXT FRAME SYNC TIME
         frame_sync_time  = frame_next_sync_time;
+    }));
+
+    #[cfg(target_os = "emscripten")]
+    unsafe {
+        use crate::emscripten::*;
+        use mem::MaybeUninit;
+        static mut CALLBACK: MaybeUninit<&mut dyn FnMut()> = MaybeUninit::uninit();
+        CALLBACK = MaybeUninit::new(callback);
+
+        unsafe extern "C" fn callback_wrapper() {
+            (&mut *CALLBACK.as_mut_ptr())();
+        }
+
+        emscripten_set_main_loop(Some(callback_wrapper), 0 as c_int, EM_TRUE);
+    }
+    #[cfg(not(target_os = "emscripten"))]
+    loop {
+        callback(); // exit on abort
     }
 
     #[cfg(target_os = "windows")] unsafe { timeEndPeriod(sleep_resolution_ms); }

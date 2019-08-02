@@ -96,9 +96,6 @@ unsafe impl GlGet for GLuint64 {
 unsafe impl GlGet for GLfloat {
     const GL_GET: unsafe fn (GLenum, *mut Self) = gl::GetFloatv;
 }
-unsafe impl GlGet for GLdouble {
-    const GL_GET: unsafe fn (GLenum, *mut Self) = gl::GetDoublev;
-}
 
 #[inline]
 pub unsafe fn get<T: GlGet>(parameter: GLenum) -> T {

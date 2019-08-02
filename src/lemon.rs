@@ -196,9 +196,13 @@ pub fn make_base_mesh() -> LemonBaseMesh {
 
 pub const MAP_RESOLUTION: usize = 512;
 
-pub fn make_radius_normal_z_map() -> Vec<[Vec2; MAP_RESOLUTION]> {
-    let mut tex = Vec::<[Vec2; MAP_RESOLUTION]>::with_capacity(MAP_RESOLUTION);
+pub fn make_radius_normal_z_map() -> Vec<[Vector3<u8>; MAP_RESOLUTION]> {
+    let mut tex = Vec::<[Vector3<u8>; MAP_RESOLUTION]>::with_capacity(MAP_RESOLUTION);
     unsafe { tex.set_len(MAP_RESOLUTION); }
+
+    fn to_u8(n: Real) -> u8 {
+        (n * 255.0).min(255.0) as u8
+    }
 
     for i_s in 0..MAP_RESOLUTION {
         let s     = (i_s+1) as Real / MAP_RESOLUTION as Real;
@@ -209,10 +213,10 @@ pub fn make_radius_normal_z_map() -> Vec<[Vec2; MAP_RESOLUTION]> {
             // has a corresponding square in lemon vertex shader.
             let z = (i_z as Real / (MAP_RESOLUTION - 1) as Real).sqrt();
             let (radius, gradient) = lemon.eval_radius_gradient(z);
-            tex[i_s][i_z] = vec2!(radius, -gradient);
+            tex[i_s][i_z] = Vector3::new(to_u8(radius), to_u8((-gradient).atan()), 0);
         }
-        tex[i_s][0               ].x = s;
-        tex[i_s][MAP_RESOLUTION-1].x = 0.0;
+        tex[i_s][0               ].x = to_u8(s);
+        tex[i_s][MAP_RESOLUTION-1].x = 0;
     }
     tex
 }

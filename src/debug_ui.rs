@@ -16,16 +16,21 @@ pub struct DebugUi {
 
 impl DebugUi {
     pub fn new(width: usize, height: usize, texture_unit: GLuint) -> Self {
+        return unsafe { mem::MaybeUninit::zeroed().assume_init() };
         unsafe { gl_with_temp_state!(
             CURRENT_PROGRAM,
             VERTEX_ARRAY_BINDING,
             ARRAY_BUFFER_BINDING,
             ACTIVE_TEXTURE,
-            TEXTURE_BINDING_RECTANGLE,
+            TEXTURE_BINDING_2D,
         {
             gl::ActiveTexture(texture_unit);
             let texture_object = gl::gen_object(gl::GenTextures);
-            gl::BindTexture(gl::TEXTURE_RECTANGLE, texture_object);
+            gl::BindTexture(gl::TEXTURE_2D, texture_object);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as _);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as _);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as _);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as _);
 
             let program = gl::link_shaders(&[
                 gl::compile_shader(include_str!("shader/ui.vert.glsl"), gl::VERTEX_SHADER),
@@ -69,6 +74,7 @@ impl DebugUi {
         w: usize, h: usize,
         pixels: &[u16],
     ) {
+        return;
         self.copy_pixels_cropped(
             x, y,
             0, 0,
@@ -83,6 +89,7 @@ impl DebugUi {
         mut img_w: usize, mut img_h: usize,
         pixels: &[u16], pixels_w: usize,
     ) {
+        return;
         unsafe {
             if src_x + img_w > pixels_w {
                 panic!("insufficent columns in pixel data: {} > {}",
@@ -138,6 +145,7 @@ impl DebugUi {
     }
 
     pub fn clear_pixels(&mut self) {
+        return;
         if self.clear { return; }
         unsafe { ptr::write_bytes(self.pixels.as_mut_ptr(), 0, self.width * self.height); }
         self.set_dirty();
@@ -148,6 +156,7 @@ impl DebugUi {
         x: isize, y: isize,
         mut w: usize, mut h: usize,
     ) {
+        return;
         if self.clear { return; }
         unsafe {
             if w == 0                     || h == 0
@@ -182,6 +191,7 @@ impl DebugUi {
     }
 
     pub fn render(&mut self) {
+        return;
         if self.clear { return; }
 
         unsafe { gl_with_temp_state!(
@@ -190,12 +200,12 @@ impl DebugUi {
         {
             if self.dirty { gl_with_temp_state!(
                 ACTIVE_TEXTURE,
-                TEXTURE_BINDING_RECTANGLE,
+                TEXTURE_BINDING_2D,
             {
                 gl::ActiveTexture(self.texture_unit);
-                gl::BindTexture(gl::TEXTURE_RECTANGLE, self.texture_object);
+                gl::BindTexture(gl::TEXTURE_2D, self.texture_object);
                 gl::TexImage2D(
-                    gl::TEXTURE_RECTANGLE, 0,
+                    gl::TEXTURE_2D, 0,
                     gl::RGBA as _, self.width as _, self.height as _, 0,
                     gl::RGBA, gl::UNSIGNED_SHORT_5_5_5_1, self.pixels.as_ptr() as *const _,
                 );
@@ -209,10 +219,12 @@ impl DebugUi {
     }
 
     pub fn pixels(&self) -> &[u16] {
+        return &[];
         &self.pixels
     }
 
     pub fn pixels_mut(&mut self) -> &mut [u16] {
+        return &mut [];
         self.set_dirty();
         &mut self.pixels
     }

@@ -23,13 +23,12 @@ impl Default for Camera {
 pub struct Render {
     program: GLuint,
 
+    u_camera_view: GLint,
+    u_camera_projection: GLint,
+    u_camera_position: GLint,
+
     u_selection_instance_id: GLint,
     u_selection_glow: GLint,
-
-    u_hover_instance_id: GLint,
-    u_hover_glow: GLint,
-
-    ubo_camera: GLuint,
 
     vao: GLuint,
 
@@ -39,6 +38,12 @@ pub struct Render {
     vbo_transform: GLuint,
     vbo_lemon_s: GLuint,
     vbo_lemon_color: GLuint,
+    vbo_lemon_glow: GLuint,
+
+    hover_id:       usize,
+    hover_glow:     Real,
+    selection_id:   usize,
+    selection_glow: Real,
 }
 
 impl Render {
@@ -52,30 +57,15 @@ impl Render {
             ]);
             gl::UseProgram(init.program);
 
-            init.ubo_camera = gl::gen_object(gl::GenBuffers);
-            gl::BindBuffer(gl::UNIFORM_BUFFER, init.ubo_camera);
-            gl::buffer_init::<Camera>(gl::UNIFORM_BUFFER, 1, gl::DYNAMIC_DRAW);
-
-            let camera_binding_index: GLuint = 1;
-            gl::BindBufferBase(gl::UNIFORM_BUFFER, camera_binding_index, init.ubo_camera);
-
-            let camera_index = gl::GetUniformBlockIndex(init.program, cstr!("Camera"));
-            gl::UniformBlockBinding(init.program, camera_index, camera_binding_index);
+            init.u_camera_view = gl::GetUniformLocation(init.program, cstr!("u_camera_view"));
+            init.u_camera_projection = gl::GetUniformLocation(init.program, cstr!("u_camera_projection"));
+            init.u_camera_position = gl::GetUniformLocation(init.program, cstr!("u_camera_position"));
 
             let u_ambient_color = gl::GetUniformLocation(init.program, cstr!("u_ambient_color"));
             gl::Uniform4fv(u_ambient_color, 1, as_ptr(&BACK_COLOR));
 
-            init.u_selection_instance_id = gl::GetUniformLocation(init.program, cstr!("u_selection_instance_id"));
-            gl::Uniform1i(init.u_selection_instance_id, !0);
-
-            init.u_selection_glow = gl::GetUniformLocation(init.program, cstr!("u_selection_glow"));
-            gl::Uniform1f(init.u_selection_glow, 0.0);
-
-            init.u_hover_instance_id = gl::GetUniformLocation(init.program, cstr!("u_hover_instance_id"));
-            gl::Uniform1i(init.u_hover_instance_id, !0);
-
-            init.u_hover_glow = gl::GetUniformLocation(init.program, cstr!("u_hover_glow"));
-            gl::Uniform1f(init.u_hover_glow, 0.0);
+            let u_direction_light = gl::GetUniformLocation(init.program, cstr!("u_direction_light"));
+            gl::Uniform3fv(u_direction_light, 1, vec3!(2.5, 0.5, 1.5).as_ptr());
 
             let txo_radius_normal_z_atlas = gl::gen_object(gl::GenTextures);
             gl::ActiveTexture(gl::TEXTURE0);
@@ -87,8 +77,8 @@ impl Render {
             let radius_normal_z_map = lemon::make_radius_normal_z_map();
             gl::TexImage2D(
                 gl::TEXTURE_2D, 0,
-                gl::RG32F as _, lemon::MAP_RESOLUTION as _, lemon::MAP_RESOLUTION as _, 0,
-                gl::RG, gl::FLOAT, radius_normal_z_map.as_ptr() as *const GLvoid,
+                gl::RGB as _, lemon::MAP_RESOLUTION as _, lemon::MAP_RESOLUTION as _, 0,
+                gl::RGB as _, gl::UNSIGNED_BYTE, radius_normal_z_map.as_ptr() as *const GLvoid,
             );
             gl::GenerateMipmap(gl::TEXTURE_2D);
             let u_radius_normal_z_map = gl::GetUniformLocation(init.program,
@@ -100,6 +90,14 @@ impl Render {
             gl::BindVertexArray(init.vao);
 
             // PER-INSTANCE ATTRIBUTES
+            let a_lemon_glow   = gl::GetAttribLocation(init.program, cstr!("a_lemon_glow")) as GLuint;
+            init.vbo_lemon_glow = gl::gen_object(gl::GenBuffers);
+            gl::BindBuffer(gl::ARRAY_BUFFER, init.vbo_lemon_glow);
+            gl::buffer_init::<GLfloat>(gl::ARRAY_BUFFER, max_bodies, gl::DYNAMIC_DRAW);
+            gl::EnableVertexAttribArray(a_lemon_glow);
+            gl::VertexAttribPointer(a_lemon_glow, 1, gl::FLOAT, gl::FALSE, 0, 0 as *const GLvoid);
+            gl::VertexAttribDivisor(a_lemon_glow, 1);
+
             let a_transform    = gl::GetAttribLocation(init.program, cstr!("a_transform")) as GLuint;
             init.vbo_transform = gl::gen_object(gl::GenBuffers);
             gl::BindBuffer(gl::ARRAY_BUFFER, init.vbo_transform);
@@ -168,8 +166,10 @@ impl Render {
     #[inline]
     pub fn update_camera(&mut self, camera: &Camera) {
         unsafe {
-            gl::BindBuffer(gl::UNIFORM_BUFFER, self.ubo_camera);
-            gl::buffer_data(gl::UNIFORM_BUFFER, slice::from_ref(camera), gl::DYNAMIC_DRAW);
+            gl::UseProgram(self.program);
+            gl::UniformMatrix4fv(self.u_camera_view, 1, gl::FALSE,  camera.view.as_ptr());
+            gl::UniformMatrix4fv(self.u_camera_projection, 1, gl::FALSE, camera.projection.as_ptr());
+            gl::Uniform3fv(self.u_camera_position, 1, camera.position.as_ptr());
         }
     }
 
@@ -210,12 +210,32 @@ impl Render {
         glow: Option<Real>,
     ) {
         unsafe {
-            gl::UseProgram(self.program);
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo_lemon_glow);
             if let Some(id) = id {
-                gl::Uniform1i(self.u_hover_instance_id, id as _);
+                if self.hover_id != !0 && self.hover_id != id {
+                    let mut remove_glow = 0.0;
+                    if self.selection_id == self.hover_id {
+                        remove_glow += self.selection_glow;
+                    }
+                    gl::buffer_sub_data(
+                        gl::ARRAY_BUFFER, self.hover_id, 
+                        slice::from_ref(&remove_glow),
+                    );
+                }
+                self.hover_id = id;
             }
             if let Some(glow) = glow {
-                gl::Uniform1f(self.u_hover_glow, glow);
+                self.hover_glow = glow;
+            }
+            if self.hover_id != !0 {
+                let mut set_glow = self.hover_glow;
+                if self.selection_id == self.hover_id {
+                    set_glow += self.selection_glow;
+                }
+                gl::buffer_sub_data(
+                    gl::ARRAY_BUFFER, self.hover_id, 
+                    slice::from_ref(&set_glow),
+                );
             }
         }
     }
@@ -226,12 +246,33 @@ impl Render {
         glow: Option<Real>,
     ) {
         unsafe {
-            gl::UseProgram(self.program);
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo_lemon_glow);
             if let Some(id) = id {
-                gl::Uniform1i(self.u_selection_instance_id, id as _);
+                if self.selection_id != !0 && self.selection_id != id {
+                    let mut remove_glow = 0.0;
+                    if self.hover_id == self.selection_id {
+                        remove_glow += self.hover_glow;
+                    }
+                    gl::buffer_sub_data(
+                        gl::ARRAY_BUFFER, self.selection_id, 
+                        slice::from_ref(&remove_glow),
+                    );
+                }
+                self.selection_id = id;
             }
             if let Some(glow) = glow {
-                gl::Uniform1f(self.u_selection_glow, glow);
+                self.selection_glow = glow;
+            }
+
+            if self.selection_id != !0 {
+                let mut set_glow = self.selection_glow;
+                if self.hover_id == self.selection_id {
+                    set_glow += self.hover_glow;
+                }
+                gl::buffer_sub_data(
+                    gl::ARRAY_BUFFER, self.selection_id, 
+                    slice::from_ref(&set_glow),
+                );
             }
         }
     }
