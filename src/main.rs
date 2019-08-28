@@ -1,7 +1,6 @@
 #[macro_use]
 extern crate bitflags;
 extern crate glutin;
-extern crate cgmath;
 extern crate rand;
 
 #[cfg(target_os = "windows")]
@@ -29,93 +28,6 @@ mod emscripten {
     }
 }
 
-macro_rules! vec4 {
-    () => {
-        Vec4 { x:zero(), y:zero(), z:zero(), w:zero() }
-    };
-    ($xyzw:expr) => {
-        vec4!($xyzw.x, $xyzw.y, $xyzw.z, $xyzw.w)
-    };
-    ($x:expr, $y:expr, $z:expr, $w:expr) => (
-        Vec4 { x:$x, y:$y, z:$z, w:$w }
-    );
-}
-
-macro_rules! vec3 {
-    () => {
-        Vec3 { x:zero(), y:zero(), z:zero() }
-    };
-    ($xyz:expr) => {
-        vec3!($xyz.x, $xyz.y, $xyz.z)
-    };
-    ($x:expr, $y:expr, $z:expr) => (
-        Vec3 { x:$x, y:$y, z:$z }
-    );
-}
-
-macro_rules! vec2 {
-    () => {
-        Vec2 { x:zero(), y:zero() }
-    };
-    ($xy:expr) => {
-        vec2!($xy.x, $xy.y)
-    };
-    ($x:expr, $y:expr) => (
-        Vec2 { x:$x, y:$y }
-    );
-}
-
-macro_rules! point3 {
-    () => {
-        Point3 { x:zero(), y:zero(), z:zero() }
-    };
-    ($xyz:expr) => {
-        point3!($xyz.x, $xyz.y, $xyz.z)
-    };
-    ($x:expr, $y:expr, $z:expr) => (
-        Point3 { x:$x, y:$y, z:$z }
-    );
-}
-
-macro_rules! point2 {
-    () => {
-        Point2 { x:zero(), y:zero() }
-    };
-    ($xy:expr) => {
-        point2!($xy.x, $xy.y)
-    };
-    ($x:expr, $y:expr) => (
-        Point2 { x:$x, y:$y }
-    );
-}
-
-macro_rules! mat4 {
-    () => (
-        mat4!(1.0)
-    );
-    ($n:expr) => (
-        Mat4 {
-            x: vec4!($n, 0.0, 0.0, 0.0),
-            y: vec4!(0.0, $n, 0.0, 0.0),
-            z: vec4!(0.0, 0.0, $n, 0.0),
-            w: vec4!(0.0, 0.0, 0.0, $n),
-        }
-    );
-}
-
-macro_rules! mat3 {
-    () => (
-        mat3!(1.0)
-    );
-    ($n:expr) => (
-        Mat3 {
-            x: vec3!($n, 0.0, 0.0),
-            y: vec3!(0.0, $n, 0.0),
-            z: vec3!(0.0, 0.0, $n),
-        }
-    );
-}
-
 macro_rules! cstr {
     ($s:expr) => (
         concat!($s, "\0") as *const str as *const [c_char] as *const c_char
@@ -136,6 +48,10 @@ macro_rules! color {
 pub const fn short_color(r: u16, g: u16, b: u16, a: bool) -> u16 {
     0 | r << 11 | g << 6 | b << 1 | a as u16
 }
+
+#[macro_use]
+mod math;
+use crate::math::*;
 
 #[macro_use]
 mod gl;
@@ -172,35 +88,8 @@ use winapi::um::{
 
 use rand::random;
 
-use cgmath::{*, num_traits::{zero, one}};
-type Real   = f32; // TODO: propagate this
-type Vec4   = cgmath::Vector4<Real>;
-    const VEC4_X: Vec4 = vec4!(1.0, 0.0, 0.0, 0.0);
-    const VEC4_Y: Vec4 = vec4!(0.0, 1.0, 0.0, 0.0);
-    const VEC4_Z: Vec4 = vec4!(0.0, 0.0, 1.0, 0.0);
-    const VEC4_W: Vec4 = vec4!(0.0, 0.0, 0.0, 1.0);
-    const VEC4_0: Vec4 = vec4!(0.0, 0.0, 0.0, 0.0);
-    const VEC4_1: Vec4 = vec4!(1.0, 1.0, 1.0, 1.0);
-type Vec3   = cgmath::Vector3<Real>;
-    const VEC3_X: Vec3 = vec3!(1.0, 0.0, 0.0);
-    const VEC3_Y: Vec3 = vec3!(0.0, 1.0, 0.0);
-    const VEC3_Z: Vec3 = vec3!(0.0, 0.0, 1.0);
-    const VEC3_0: Vec3 = vec3!(0.0, 0.0, 0.0);
-    const VEC3_1: Vec3 = vec3!(1.0, 1.0, 1.0);
-type Vec2   = cgmath::Vector2<Real>;
-    const VEC2_X: Vec2 = vec2!(1.0, 0.0);
-    const VEC2_Y: Vec2 = vec2!(0.0, 1.0);
-    const VEC2_0: Vec2 = vec2!(0.0, 0.0);
-    const VEC2_1: Vec2 = vec2!(1.0, 1.0);
-type Point3 = cgmath::Point3<Real>;
-type Point2 = cgmath::Point2<Real>;
-type Mat4   = cgmath::Matrix4<Real>;
-type Mat3   = cgmath::Matrix3<Real>;
-type Quat   = cgmath::Quaternion<Real>;
-
 use std::{
     default::Default,
-    f32::{self, NAN, INFINITY, consts::PI},
     mem,
     ops::*,
     os::raw::c_char,
@@ -253,6 +142,12 @@ const LEMON_S_MAX:        f32 = 0.75;
 const LEMON_PARTY_S_MIN:  f32 = 0.30;
 const LEMON_PARTY_S_MAX:  f32 = 0.95;
 
+const LEMON_SPAWN_HEIGHT_BASE:     Real  = 3.0;
+const LEMON_SPAWN_HEIGHT_VARIANCE: Real  = 0.5;
+const LEMON_SPAWN_INIT:            usize = 7;
+const LEMON_SPAWN_MULTI_OFFSET:    Real  = 0.25*METER + 2.0*LEMON_SCALE_MAX;
+const LEMON_SPAWN_MULTI_PERIOD:    usize = (1.0 * SECOND) as usize;
+
 const CAMERA_HEIGHT_BASE:    f32 = 0.5;
 const CAMERA_HEIGHT_FACTOR:  f32 = 0.6;
 const CAMERA_HEIGHT_DEFAULT: f32 = CAMERA_HEIGHT_BASE + 1.0 * CAMERA_HEIGHT_FACTOR;
@@ -295,7 +190,7 @@ fn main() {
         (vsync, msaa, max_bodies, width, height)
     };
     let aspect     = width as f32 / height as f32;
-    if max_bodies <= 0   { panic!("max bodies must be greater than 0"); }
+    if max_bodies <= 15  { panic!("max bodies must be greater than 15"); }
     if width      <= 127 { panic!("window width must be greater than 127"); }
     if height     <= 127 { panic!("window height must be greater than 127"); }
 
@@ -326,10 +221,17 @@ fn main() {
 
     let mut render = Render::init(max_bodies);
 
+    let mut debug_frame_store             = Jagged::new();
+    let mut debug_frame_current           = 0;
+    let mut debug_frame_step              = 0;
+    let mut debug_frame_step_delay        = 0;
+
     let mut lemons           = Vec::<Lemon>::with_capacity(max_bodies);
     let mut lemon_transforms = vec![mat4!(0.0); max_bodies].into_boxed_slice();
-    let spawn_lemon = |render: &mut Render, lemons: &mut Vec<Lemon>| {
-        if lemons.len() >= lemons.capacity() { return; }
+    let mut lemon_spawn_frame = 0;
+
+    macro_rules! spawn_lemon { () => {
+        if lemons.len() >= max_bodies { return; }
 
         let scale = LEMON_SCALE_MIN + (LEMON_SCALE_MAX-LEMON_SCALE_MIN) * random::<f32>();
         let s     = LEMON_S_MIN + (LEMON_S_MAX-LEMON_S_MIN) * random::<f32>();
@@ -341,10 +243,19 @@ fn main() {
         render.update_lemon(lemons.len(), Some(&s), Some(&color), None);
 
         reset_lemon(&mut new_lemon);
+        if lemons.len() > 0 
+        && debug_frame_current < lemon_spawn_frame + LEMON_SPAWN_MULTI_PERIOD 
+        {
+            new_lemon.phys.position.z = lemons[lemons.len()-1].phys.position.z 
+                                      + LEMON_SPAWN_MULTI_OFFSET;
+        }
+        lemon_spawn_frame = debug_frame_current;
         lemons.push(new_lemon);
-    };
+    } };
+
     fn reset_lemon(lemon: &mut Lemon) {
-        lemon.phys.position         = point3!(0.0, 0.0, (2.0+3.0*random::<f32>())*METER);
+        lemon.phys.position         = point3!(VEC3_0);
+        lemon.phys.position.z       = (LEMON_SPAWN_HEIGHT_BASE + (random::<f32>()*TAU).sin() * LEMON_SPAWN_HEIGHT_VARIANCE) * METER;
         lemon.phys.orientation      = Quat::from_axis_angle(
                                       random::<Vec3>().normalize(),
                                       Deg(30.0 * (random::<f32>() - 0.5)));
@@ -353,8 +264,19 @@ fn main() {
                                     * (random::<Vec3>() - vec3!(0.5, 0.5, 0.5)) * 2.0
                                     * TAU / 5.0 / SECOND;
     }
-    spawn_lemon(&mut render, &mut lemons);
-    let mut lemon_selection_index:  usize = 0;
+
+    macro_rules! debug_frame_store_clear { () => {
+        debug_frame_store.clear();
+        debug_frame_current = 0;
+        //debug_frame_store.push_copy(&lemons);
+    }; }
+
+    for _ in 0..LEMON_SPAWN_INIT {
+        spawn_lemon!();
+    }
+    //debug_frame_store.push_copy(&lemons);
+
+    let mut lemon_selection_index:  usize = !0;
     let mut lemon_selection_anim:   Real  = 0.0;
     let mut lemon_hover_index:      usize = !0;
     let mut lemon_hover_prev_index: usize = !0;
@@ -404,27 +326,16 @@ fn main() {
         (elapsed.subsec_nanos() / debug_histogram_nano_per_px) as usize
     };
 
-    let mut debug_frame_store             = Jagged::new();
-    let mut debug_frame_current           = 0;
-    let mut debug_frame_step              = 0;
-    let mut debug_frame_step_delay        = 0;
-    macro_rules! debug_frame_store_clear { () => {
-        debug_frame_store.clear();
-        debug_frame_current = 0;
-        //debug_frame_store.push_copy(&lemons);
-    }; }
-    //debug_frame_store.push_copy(&lemons);
-
     let mut debug_pause                   = false;
     let mut debug_pause_next_frame        = false;
 
     let mut camera              = Camera::default();
     let mut camera_fovy         = 30.0_f32.to_radians();
-    let mut camera_distance     = 9.0_f32;
-    let mut camera_elevation    = 0.0_f32.to_radians();
+    let mut camera_distance     = 15.0_f32;
+    let mut camera_elevation    = 9.0_f32.to_radians();
     let mut camera_azimuth      = 0.0_f32.to_radians();
     let mut camera_direction    = VEC3_0;
-    let mut camera_target       = point3!(VEC3_0);
+    let mut camera_target       = point3!(0.0, 0.0, CAMERA_HEIGHT_DEFAULT);
     let mut camera_lerp         = NAN;
     let mut camera_lerp_origin  = point3!(VEC3_0);
     let mut camera_lerp_point   = point3!(VEC3_0);
@@ -566,7 +477,7 @@ fn main() {
                     },
                     VirtualKeyCode::Space => if let ElementState::Pressed = state {
                         if modifiers.ctrl {
-                            spawn_lemon(&mut render, &mut lemons);
+                            spawn_lemon!();
                         } else {
                             if lemon_selection_index < lemons.len() {
                                 reset_lemon(&mut lemons[lemon_selection_index]);
@@ -667,7 +578,7 @@ fn main() {
             if debug_pause {
                 debug_frame_store.truncate(debug_frame_current + 1);
             } else {
-                //debug_frame_current = debug_frame_store.len() - 1;
+                //assert_eq!(debug_frame_current, debug_frame_store.len() - 1);
             }
             debug_pause = debug_pause_next_frame;
         }
@@ -1164,6 +1075,9 @@ fn main() {
 
         // SET NEXT FRAME SYNC TIME
         frame_sync_time  = frame_next_sync_time;
+
+        // ADVANCE FRAME COUNTER
+        if !debug_pause { debug_frame_current += 1;}
     }));
 
     #[cfg(target_os = "emscripten")]
