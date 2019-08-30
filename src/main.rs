@@ -120,11 +120,12 @@ const LEMON_S_MAX:        f32 = 0.75;
 const LEMON_PARTY_S_MIN:  f32 = 0.30;
 const LEMON_PARTY_S_MAX:  f32 = 0.95;
 
-const LEMON_SPAWN_HEIGHT_BASE:     Real  = 3.0;
-const LEMON_SPAWN_HEIGHT_VARIANCE: Real  = 0.5;
-const LEMON_SPAWN_INIT:            usize = 7;
-const LEMON_SPAWN_MULTI_OFFSET:    Real  = 0.25*METER + 2.0*LEMON_SCALE_MAX;
-const LEMON_SPAWN_MULTI_PERIOD:    usize = (1.0 * SECOND) as usize;
+const LEMON_SPAWN_HEIGHT_BASE:       Real  = 3.0;
+const LEMON_SPAWN_HEIGHT_VARIANCE:   Real  = 0.5;
+const LEMON_SPAWN_HORIZONTAL_RADIUS: Real  = 0.5;
+const LEMON_SPAWN_INIT:              usize = 7;
+const LEMON_SPAWN_MULTI_OFFSET:      Real  = 0.25*METER + 2.0*LEMON_SCALE_MAX;
+const LEMON_SPAWN_MULTI_PERIOD:      usize = (1.0 * SECOND) as usize;
 
 const CAMERA_HEIGHT_BASE:    f32 = 0.5;
 const CAMERA_HEIGHT_FACTOR:  f32 = 0.6;
@@ -235,8 +236,12 @@ fn main() {
     } };
 
     fn reset_lemon(lemon: &mut Lemon) {
-        lemon.phys.position         = point3!(VEC3_0);
-        lemon.phys.position.z       = (LEMON_SPAWN_HEIGHT_BASE + (random::<f32>()*TAU).sin() * LEMON_SPAWN_HEIGHT_VARIANCE) * METER;
+        let theta = random::<f32>() * TAU;
+        lemon.phys.position         = Point3 {
+            x: theta.sin() * LEMON_SPAWN_HORIZONTAL_RADIUS,
+            y: theta.cos() * LEMON_SPAWN_HORIZONTAL_RADIUS,
+            z: (LEMON_SPAWN_HEIGHT_BASE + (random::<f32>()*TAU).sin() * LEMON_SPAWN_HEIGHT_VARIANCE) * METER,
+        };
         lemon.phys.orientation      = Quat::from_axis_angle(
                                       random::<Vec3>().normalize(),
                                       Deg(30.0 * (random::<f32>() - 0.5)));
