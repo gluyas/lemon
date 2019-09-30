@@ -484,7 +484,7 @@ fn main() {
                     VirtualKeyCode::R => if let ElementState::Pressed = state {
                         if modifiers.ctrl && modifiers.shift {
                             lemons.clear();
-                            debug_frame_store.clear();
+                            debug_frame_store_clear!();
                             if lemon_selection_index != !0 {
                                 lemon_selection_index = !0;
                                 camera_target.z       = CAMERA_HEIGHT_DEFAULT;
