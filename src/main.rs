@@ -38,6 +38,9 @@ use crate::gl::types::*;
 mod render;
 use crate::render::{Camera, Render};
 
+mod render_sdf;
+use crate::render_sdf::RenderSdf;
+
 mod jagged;
 use crate::jagged::Jagged;
 
@@ -135,6 +138,7 @@ const CAMERA_LERP_TIME:      f32 = 0.3;
 const DEFAULT_VSYNC:      bool  = false;
 const DEFAULT_MSAA:       u16   = 2;
 const DEFAULT_MAX_BODIES: usize = 256;
+const FORCE_MAX_BODIES:   usize = 256; // TODO: remove this
 const DEFAULT_WIDTH:      usize = 1280;
 const DEFAULT_HEIGHT:     usize = 720;
 
@@ -166,7 +170,7 @@ fn main() {
                 _    => continue,
             };
         }
-        (vsync, msaa, max_bodies, width, height)
+        (vsync, msaa, FORCE_MAX_BODIES, width, height)
     };
     let aspect     = width as f32 / height as f32;
     if max_bodies <= 15  { panic!("max bodies must be greater than 15"); }
@@ -202,6 +206,8 @@ fn main() {
     };
 
     let mut render = Render::init(max_bodies);
+    let mut render_sdf = RenderSdf::init(max_bodies);
+    let mut render_sdf_enabled = false;
 
     let mut debug_frame_store             = Jagged::new();
     let mut debug_frame_current           = 0;
@@ -272,6 +278,7 @@ fn main() {
     let mut lemon_drag_offset:      Vec3  = VEC3_0;
     let mut lemon_drag_plane:       Plane = Plane::new(VEC3_0, 0.0);
     render.update_selection(Some(lemon_selection_index), None);
+    render_sdf.update_selection(Some(lemon_selection_index), None);
 
     let mut debug            = DebugRender::new();
     let mut debug_depth_test = DebugRender::with_shared_context(&debug);
@@ -427,12 +434,16 @@ fn main() {
                             let new_scale = new_scale.unwrap_or(lemon.scale);
                             let new_s     = new_s.unwrap_or_else(|| lemon.get_normalized().s);
                             lemon.mutate_shape(new_s, new_scale);
+                            render_sdf.update_lemon(lemon_selection_index, Some(&lemon));
                         }
                     }
                 },
                 WindowEvent::KeyboardInput{ input: KeyboardInput {
                     state, modifiers, virtual_keycode: Some(key), ..
                 }, .. } => match key {
+                    VirtualKeyCode::Q => if let ElementState::Pressed = state {
+                        render_sdf_enabled = !render_sdf_enabled;
+                    },
                     VirtualKeyCode::A => if let ElementState::Pressed = state {
                         debug_draw_axes = !debug_draw_axes;
                     },
@@ -621,8 +632,11 @@ fn main() {
                 camera_lerp_point + camera_direction,
                 VEC3_Z,
             );
-
+        debug_histogram.add_bar_segment("",
+            short_color(0, 31, 31, true), get_histogram_bar_height(frame_sync_time.elapsed()),
+        );
             render.update_camera(&camera);
+            render_sdf.update_camera(&camera);
             debug.update_camera(&(camera.projection * camera.view));
 
             mouse_ray_needs_update = true;
@@ -691,6 +705,7 @@ fn main() {
                     else        { lemon.sagitta.to_bits() &!LSB_MASK }
                 );
                 render.update_lemon(lemon_index, Some(&normalized.s), None, None);
+                render_sdf.update_lemon(lemon_index, Some(&lemon));
             }
 
             // INTEGRATE RIGIDBODIES
@@ -820,6 +835,7 @@ fn main() {
             lemon_interact_index     = lemon_hover_index;
             lemon_hover_needs_update = false;
             render.update_hover(Some(lemon_hover_index), Some(0.6));
+            render_sdf.update_hover(Some(lemon_hover_index), Some(0.6));
         }
         if mouse_released {
             if mouse_clicked && lemon_interact_index == lemon_hover_index {
@@ -846,6 +862,7 @@ fn main() {
                 lemon_selection_index = lemon_interact_index;
                 lemon_selection_anim  = 0.0;
                 render.update_selection(Some(lemon_selection_index), None);
+                render_sdf.update_selection(Some(lemon_selection_index), None);
             }
             lemon_hover_needs_update = true;
         }
@@ -865,12 +882,14 @@ fn main() {
                     // cancel hover
                     lemon_hover_index = !0;
                     render.update_hover(Some(!0), None);
+                    render_sdf.update_hover(Some(!0), None);
                 }
             }
         } else {
             // no mouse button input: set highlight to lemon under cursor
             if lemon_hover_index != lemon_hover_prev_index || mouse_released {
                 render.update_hover(Some(lemon_hover_index), Some(0.3));
+                render_sdf.update_hover(Some(lemon_hover_index), Some(0.3));
             }
         }
 
@@ -887,6 +906,7 @@ fn main() {
                 MIN
             };
             render.update_selection(None, Some(glow));
+            render_sdf.update_selection(None, Some(glow));
             lemon_selection_anim += FRAME_DELTA_TIME / LEN;
         }
 
@@ -975,7 +995,13 @@ fn main() {
 
             if debug_draw_wireframe { gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE); }
             render.update_lemon_transforms(&lemon_transforms[0..lemons.len()]);
-            render.render_lemons(lemons.len());
+            render_sdf.update_lemons(&lemons);
+
+            if render_sdf_enabled {
+                render_sdf.render_lemons(lemons.len());
+            } else {
+                render.render_lemons(lemons.len());
+            }
             gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
 
             debug_depth_test.render_frame();
