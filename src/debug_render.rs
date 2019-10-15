@@ -11,7 +11,7 @@ struct DrawCmd {
 #[derive(Debug)]
 pub struct DebugRender {
     program:    GLuint,
-    u_camera:   GLuint,
+    u_camera:   GLint,
     a_color:    GLuint,
     a_position: GLuint,
 
@@ -22,13 +22,19 @@ impl DebugRender {
     pub fn new() -> Self {
         unsafe {
             let program = gl::link_shaders(&[
-                gl::compile_shader(include_str!("shader/debug.vert.glsl"), gl::VERTEX_SHADER),
-                gl::compile_shader(include_str!("shader/debug.frag.glsl"), gl::FRAGMENT_SHADER),
-            ]);
-            let u_camera = gl::GetUniformLocation(program, cstr!("u_camera")) as GLuint;
+                gl::compile_shader(
+                    include_bytes!("shader/debug.vert.glsl"), 
+                    gl::VERTEX_SHADER,
+                ).unwrap(),
+                gl::compile_shader(
+                    include_bytes!("shader/debug.frag.glsl"), 
+                    gl::FRAGMENT_SHADER,
+                ).unwrap(),
+            ]).unwrap();
+            let u_camera = gl::get_uniform_location(program, cstr!("u_camera")).unwrap();
 
-            let a_color    = gl::GetAttribLocation(program, cstr!("a_color")) as GLuint;
-            let a_position = gl::GetAttribLocation(program, cstr!("a_position")) as GLuint;
+            let a_color    = gl::get_attrib_location(program, cstr!("a_color")).unwrap();
+            let a_position = gl::get_attrib_location(program, cstr!("a_position")).unwrap();
 
             DebugRender {
                 program, u_camera, a_color, a_position,
@@ -50,7 +56,7 @@ impl DebugRender {
             CURRENT_PROGRAM,
         {
             gl::UseProgram(self.program);
-            gl::UniformMatrix4fv(self.u_camera as GLint, 1, gl::FALSE, camera.as_ptr());
+            gl::UniformMatrix4fv(self.u_camera, 1, gl::FALSE, camera.as_ptr());
         }); }
     }
 

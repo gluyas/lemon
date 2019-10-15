@@ -27,35 +27,41 @@ impl RenderSdf {
         let mut init = RenderSdf::default();
         unsafe {
             init.program = gl::link_shaders(&[
-                gl::compile_shader(include_str!("shader/lemon_sdf.vert.glsl"), gl::VERTEX_SHADER),
-                gl::compile_shader(include_str!("shader/lemon_sdf.frag.glsl"), gl::FRAGMENT_SHADER),
-            ]);
-            gl::UseProgram(init.program);
+                gl::compile_shader(
+                    include_bytes!("shader/lemon_sdf.vert.glsl"), 
+                    gl::VERTEX_SHADER,
+                ).unwrap(),
+                gl::compile_shader(
+                    include_bytes!("shader/lemon_sdf.frag.glsl"), 
+                    gl::FRAGMENT_SHADER,
+                ).unwrap(),
+            ]).unwrap();
 
-            init.u_lemons = gl::GetUniformLocation(init.program, cstr!("u_lemons"));
-            init.u_lemons_len = gl::GetUniformLocation(init.program, cstr!("u_lemons_len"));
-            init.lemons_for_shader = vec![0.0; FORCE_MAX_BODIES * 8].into_boxed_slice();
+            init.u_lemons = gl::get_uniform_location(init.program, cstr!("u_lemons")).unwrap();
+            init.u_lemons_len = gl::get_uniform_location(init.program, cstr!("u_lemons_len")).unwrap();
+            init.lemons_for_shader = vec![0.0; max_bodies * 8].into_boxed_slice();
             init.lemons_for_shader_dirty = true;
 
-            init.u_camera_inverse= gl::GetUniformLocation(init.program, cstr!("u_camera_inverse"));
-            init.u_camera_pos= gl::GetUniformLocation(init.program, cstr!("u_camera_pos"));
+            init.u_camera_inverse= gl::get_uniform_location(init.program, cstr!("u_camera_inverse")).unwrap();
+            init.u_camera_pos= gl::get_uniform_location(init.program, cstr!("u_camera_pos")).unwrap();
 
-            init.u_hover_glow = gl::GetUniformLocation(init.program, cstr!("u_hover_glow"));
+            init.u_hover_glow = gl::get_uniform_location(init.program, cstr!("u_hover_glow")).unwrap();
             gl::Uniform1f(init.u_hover_glow, 0.0);
 
-            init.u_selection_glow = gl::GetUniformLocation(init.program, cstr!("u_selection_glow"));
+            init.u_selection_instance_id = gl::get_uniform_location(init.program, cstr!("u_selection_instance_id")).unwrap();
+            gl::Uniform1i(init.u_selection_instance_id, !0);
+            init.u_selection_glow = gl::get_uniform_location(init.program, cstr!("u_selection_glow")).unwrap();
             gl::Uniform1f(init.u_selection_glow, 0.0);
 
-            init.u_hover_instance_id = gl::GetUniformLocation(init.program, cstr!("u_hover_instance_id"));
+            init.u_hover_instance_id = gl::get_uniform_location(init.program, cstr!("u_hover_instance_id")).unwrap();
             gl::Uniform1i(init.u_hover_instance_id, !0);
-
-            init.u_hover_glow = gl::GetUniformLocation(init.program, cstr!("u_hover_glow"));
+            init.u_hover_glow = gl::get_uniform_location(init.program, cstr!("u_hover_glow")).unwrap();
             gl::Uniform1f(init.u_hover_glow, 0.0);
 
             init.vao = gl::gen_object(gl::GenVertexArrays);
             gl::BindVertexArray(init.vao);
 
-            let a_ndc = gl::GetAttribLocation(init.program, cstr!("a_ndc")) as GLuint;
+            let a_ndc = gl::get_attrib_location(init.program, cstr!("a_ndc")).unwrap();
             let vbo_ndc = gl::gen_object(gl::GenBuffers);
             gl::BindBuffer(gl::ARRAY_BUFFER, vbo_ndc);
             let verts: [Point2; 4] = [
@@ -125,7 +131,6 @@ impl RenderSdf {
         id:   Option<usize>,
         glow: Option<Real>,
     ) {
-        return;
         unsafe {
             gl::UseProgram(self.program);
             if let Some(id) = id {
@@ -142,7 +147,6 @@ impl RenderSdf {
         id:   Option<usize>,
         glow: Option<Real>,
     ) {
-        return;
         unsafe {
             gl::UseProgram(self.program);
             if let Some(id) = id {

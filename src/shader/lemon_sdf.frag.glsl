@@ -1,5 +1,6 @@
 #version 330
 
+// TODO: integrate with consts defined in main.rs
 #define MAX_LEMONS 256
 
 in vec2 v_ndc;
@@ -74,7 +75,7 @@ float sdLemon(vec3 p, Lemon lemon)
     return length(lemon.focus*-normalize(y) - s) - lemon.radius;
 }
 
-float sdWorld(vec3 p) {
+float sdWorld(vec3 p, out int id) {
     float min_sd = 2000.0;
     for (int i = 0; i < int(u_lemons_len); i++) {
         mat2x4 mat = u_lemons[i];
@@ -82,6 +83,7 @@ float sdWorld(vec3 p) {
         float sd = sdLemon(p, lemon);
         if (sd < min_sd) {
             min_sd = sd;
+            id = i;
         }
     }
     return min_sd;
@@ -93,9 +95,10 @@ void main() {
     float ray_depth = 0.0;
 
     int i = 0;
+    int id = -1;
     while (ray_depth <= 1000.0) {
         if (++i >= 128) { break; }
-        float sd = sdWorld(ray_point);
+        float sd = sdWorld(ray_point, id);
         ray_depth += sd;
         if (sd <= 0.0) {
             break;
@@ -105,6 +108,11 @@ void main() {
 
     if (ray_depth <= 1000.0) {
         gl_FragColor = vec4(1.0, 0.8, 0.2, 1.0);
+
+        float glow = 0.0;
+        if (id == u_hover_instance_id)     glow += u_hover_glow;
+        if (id == u_selection_instance_id) glow += u_selection_glow;
+        gl_FragColor = mix(gl_FragColor, vec4(1.0), glow);
     } else {
         discard;
     }

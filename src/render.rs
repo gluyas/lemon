@@ -47,9 +47,15 @@ impl Render {
         let mut init = Render::default();
         unsafe {
             init.program = gl::link_shaders(&[
-                gl::compile_shader(include_str!("shader/lemon.vert.glsl"), gl::VERTEX_SHADER),
-                gl::compile_shader(include_str!("shader/lemon.frag.glsl"), gl::FRAGMENT_SHADER),
-            ]);
+                gl::compile_shader(
+                    include_bytes!("shader/lemon.vert.glsl"), 
+                    gl::VERTEX_SHADER,
+                ).unwrap(),
+                gl::compile_shader(
+                    include_bytes!("shader/lemon.frag.glsl"), 
+                    gl::FRAGMENT_SHADER,
+                ).unwrap(),
+            ]).unwrap();
             gl::UseProgram(init.program);
 
             init.ubo_camera = gl::gen_object(gl::GenBuffers);
@@ -59,22 +65,19 @@ impl Render {
             let camera_binding_index: GLuint = 1;
             gl::BindBufferBase(gl::UNIFORM_BUFFER, camera_binding_index, init.ubo_camera);
 
-            let camera_index = gl::GetUniformBlockIndex(init.program, cstr!("Camera"));
+            let camera_index = gl::GetUniformBlockIndex(init.program, cstr!("Camera").as_ptr() as *const GLchar);
             gl::UniformBlockBinding(init.program, camera_index, camera_binding_index);
 
-            let u_ambient_color = gl::GetUniformLocation(init.program, cstr!("u_ambient_color"));
-            gl::Uniform4fv(u_ambient_color, 1, as_ptr(&BACK_COLOR));
-
-            init.u_selection_instance_id = gl::GetUniformLocation(init.program, cstr!("u_selection_instance_id"));
+            init.u_selection_instance_id = gl::get_uniform_location(init.program, cstr!("u_selection_instance_id")).unwrap();
             gl::Uniform1i(init.u_selection_instance_id, !0);
 
-            init.u_selection_glow = gl::GetUniformLocation(init.program, cstr!("u_selection_glow"));
+            init.u_selection_glow = gl::get_uniform_location(init.program, cstr!("u_selection_glow")).unwrap();
             gl::Uniform1f(init.u_selection_glow, 0.0);
 
-            init.u_hover_instance_id = gl::GetUniformLocation(init.program, cstr!("u_hover_instance_id"));
+            init.u_hover_instance_id = gl::get_uniform_location(init.program, cstr!("u_hover_instance_id")).unwrap();
             gl::Uniform1i(init.u_hover_instance_id, !0);
 
-            init.u_hover_glow = gl::GetUniformLocation(init.program, cstr!("u_hover_glow"));
+            init.u_hover_glow = gl::get_uniform_location(init.program, cstr!("u_hover_glow")).unwrap();
             gl::Uniform1f(init.u_hover_glow, 0.0);
 
             let txo_radius_normal_z_atlas = gl::gen_object(gl::GenTextures);
@@ -91,16 +94,14 @@ impl Render {
                 gl::RG, gl::FLOAT, radius_normal_z_map.as_ptr() as *const GLvoid,
             );
             gl::GenerateMipmap(gl::TEXTURE_2D);
-            let u_radius_normal_z_map = gl::GetUniformLocation(init.program,
-                cstr!("u_radius_normal_z_map")
-            );
+            let u_radius_normal_z_map = gl::get_uniform_location(init.program, cstr!("u_radius_normal_z_map")).unwrap();
             gl::Uniform1i(u_radius_normal_z_map, 0);
 
             init.vao = gl::gen_object(gl::GenVertexArrays);
             gl::BindVertexArray(init.vao);
 
             // PER-INSTANCE ATTRIBUTES
-            let a_transform    = gl::GetAttribLocation(init.program, cstr!("a_transform")) as GLuint;
+            let a_transform    = gl::get_attrib_location(init.program, cstr!("a_transform")).unwrap();
             init.vbo_transform = gl::gen_object(gl::GenBuffers);
             gl::BindBuffer(gl::ARRAY_BUFFER, init.vbo_transform);
             gl::buffer_init::<Mat4>(gl::ARRAY_BUFFER, max_bodies, gl::STREAM_DRAW);
@@ -115,7 +116,7 @@ impl Render {
                 gl::VertexAttribDivisor(a_transform_i, 1);
             }
 
-            let a_lemon_s   = gl::GetAttribLocation(init.program, cstr!("a_lemon_s")) as GLuint;
+            let a_lemon_s   = gl::get_attrib_location(init.program, cstr!("a_lemon_s")).unwrap();
             init.vbo_lemon_s = gl::gen_object(gl::GenBuffers);
             gl::BindBuffer(gl::ARRAY_BUFFER, init.vbo_lemon_s);
             gl::buffer_init::<f32>(gl::ARRAY_BUFFER, max_bodies, gl::DYNAMIC_DRAW);
@@ -123,7 +124,7 @@ impl Render {
             gl::VertexAttribPointer(a_lemon_s, 1, gl::FLOAT, gl::FALSE, 0, 0 as *const GLvoid);
             gl::VertexAttribDivisor(a_lemon_s, 1);
 
-            let a_lemon_color   = gl::GetAttribLocation(init.program, cstr!("a_lemon_color")) as GLuint;
+            let a_lemon_color   = gl::get_attrib_location(init.program, cstr!("a_lemon_color")).unwrap();
             init.vbo_lemon_color = gl::gen_object(gl::GenBuffers);
             gl::BindBuffer(gl::ARRAY_BUFFER, init.vbo_lemon_color);
             gl::buffer_init::<Vec3>(gl::ARRAY_BUFFER, max_bodies, gl::DYNAMIC_DRAW);
@@ -134,7 +135,7 @@ impl Render {
             // PER-VERTEX ATTRIBUTES
             let base_mesh = lemon::make_base_mesh();
 
-            let a_position   = gl::GetAttribLocation(init.program, cstr!("a_position")) as GLuint;
+            let a_position   = gl::get_attrib_location(init.program, cstr!("a_position")).unwrap();
             let vbo_position = gl::gen_object(gl::GenBuffers);
             gl::BindBuffer(gl::ARRAY_BUFFER, vbo_position);
             gl::buffer_data(gl::ARRAY_BUFFER, &base_mesh.points, gl::STATIC_DRAW);

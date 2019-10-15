@@ -8,7 +8,7 @@ extern crate winapi;
 
 macro_rules! cstr {
     ($s:expr) => (
-        concat!($s, "\0") as *const str as *const [c_char] as *const c_char
+        CStr::from_bytes_with_nul(concat!($s, "\0").as_bytes()).unwrap();
     );
 }
 
@@ -71,9 +71,14 @@ use rand::random;
 
 use std::{
     default::Default,
+    error::Error,
+    ffi::{CStr, CString},
+    fmt,
+    fs,
     mem,
     ops::*,
     os::raw::c_char,
+    path::Path,
     ptr,
     slice,
     time::{Duration, Instant},
@@ -138,7 +143,6 @@ const CAMERA_LERP_TIME:      f32 = 0.3;
 const DEFAULT_VSYNC:      bool  = false;
 const DEFAULT_MSAA:       u16   = 2;
 const DEFAULT_MAX_BODIES: usize = 256;
-const FORCE_MAX_BODIES:   usize = 256; // TODO: remove this
 const DEFAULT_WIDTH:      usize = 1280;
 const DEFAULT_HEIGHT:     usize = 720;
 
@@ -170,7 +174,7 @@ fn main() {
                 _    => continue,
             };
         }
-        (vsync, msaa, FORCE_MAX_BODIES, width, height)
+        (vsync, msaa, max_bodies, width, height)
     };
     let aspect     = width as f32 / height as f32;
     if max_bodies <= 15  { panic!("max bodies must be greater than 15"); }

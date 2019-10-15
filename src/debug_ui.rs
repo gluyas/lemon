@@ -28,16 +28,19 @@ impl DebugUi {
             gl::BindTexture(gl::TEXTURE_RECTANGLE, texture_object);
 
             let program = gl::link_shaders(&[
-                gl::compile_shader(include_str!("shader/ui.vert.glsl"), gl::VERTEX_SHADER),
-                gl::compile_shader(include_str!("shader/ui.frag.glsl"), gl::FRAGMENT_SHADER),
-            ]);
+                gl::compile_shader(
+                    include_bytes!("shader/ui.vert.glsl"), 
+                    gl::VERTEX_SHADER,
+                ).unwrap(),
+                gl::compile_shader(
+                    include_bytes!("shader/ui.frag.glsl"), 
+                    gl::FRAGMENT_SHADER,
+                ).unwrap(),
+            ]).unwrap();
             gl::UseProgram(program);
 
-            let u_pixels = gl::GetUniformLocation(program, cstr!("u_pixels"));
+            let u_pixels = gl::get_uniform_location(program, cstr!("u_pixels")).unwrap();
             gl::Uniform1i(u_pixels, texture_unit as GLint - gl::TEXTURE0 as GLint);
-
-            let u_depth = gl::GetUniformLocation(program, cstr!("u_depth"));
-            gl::Uniform1f(u_depth, 1.0);
 
             let vao = gl::gen_object(gl::GenVertexArrays);
             gl::BindVertexArray(vao);
@@ -49,7 +52,7 @@ impl DebugUi {
                 vec2!(-1.0, -1.0), vec2!(1.0, -1.0), vec2!(1.0, 1.0), vec2!(-1.0, 1.0),
             ], gl::STATIC_DRAW);
 
-            let a_position = gl::GetAttribLocation(program, cstr!("a_position")) as GLuint;
+            let a_position = gl::get_attrib_location(program, cstr!("a_position")).unwrap();
             gl::EnableVertexAttribArray(a_position);
             gl::VertexAttribPointer(
                 a_position, 2, gl::FLOAT, gl::FALSE,
