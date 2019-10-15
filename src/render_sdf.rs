@@ -23,45 +23,39 @@ pub struct RenderSdf {
 
 impl RenderSdf {
     #[inline]
-    pub fn init(max_bodies: usize) -> Self {
+    pub fn init(max_bodies: usize) -> Result<Self, gl::GlslError> {
         let mut init = RenderSdf::default();
-        unsafe {
-            init.program = gl::link_shaders(&[
-                gl::compile_shader(
-                    include_bytes!("shader/lemon_sdf.vert.glsl"), 
-                    gl::VERTEX_SHADER,
-                ).unwrap(),
-                gl::compile_shader(
-                    include_bytes!("shader/lemon_sdf.frag.glsl"), 
-                    gl::FRAGMENT_SHADER,
-                ).unwrap(),
-            ]).unwrap();
+        init.program = gl::compile_and_link_shaders_from_path(&[
+            (&"src/shader/lemon_sdf.vert.glsl", gl::VERTEX_SHADER),
+            (&"src/shader/lemon_sdf.frag.glsl", gl::FRAGMENT_SHADER),
+        ])?;
 
-            init.u_lemons = gl::get_uniform_location(init.program, cstr!("u_lemons")).unwrap();
-            init.u_lemons_len = gl::get_uniform_location(init.program, cstr!("u_lemons_len")).unwrap();
+        (|| unsafe {
+            init.u_lemons = gl::get_uniform_location(init.program, cstr!("u_lemons"))?;
+            init.u_lemons_len = gl::get_uniform_location(init.program, cstr!("u_lemons_len"))?;
             init.lemons_for_shader = vec![0.0; max_bodies * 8].into_boxed_slice();
             init.lemons_for_shader_dirty = true;
 
-            init.u_camera_inverse= gl::get_uniform_location(init.program, cstr!("u_camera_inverse")).unwrap();
-            init.u_camera_pos= gl::get_uniform_location(init.program, cstr!("u_camera_pos")).unwrap();
+            init.u_camera_inverse= gl::get_uniform_location(init.program, cstr!("u_camera_inverse"))?;
+            init.u_camera_pos= gl::get_uniform_location(init.program, cstr!("u_camera_pos"))?;
 
-            init.u_hover_glow = gl::get_uniform_location(init.program, cstr!("u_hover_glow")).unwrap();
+            init.u_hover_glow = gl::get_uniform_location(init.program, cstr!("u_hover_glow"))?;
             gl::Uniform1f(init.u_hover_glow, 0.0);
 
-            init.u_selection_instance_id = gl::get_uniform_location(init.program, cstr!("u_selection_instance_id")).unwrap();
+            init.u_selection_instance_id = gl::get_uniform_location(init.program, cstr!("u_selection_instance_id"))?;
             gl::Uniform1i(init.u_selection_instance_id, !0);
-            init.u_selection_glow = gl::get_uniform_location(init.program, cstr!("u_selection_glow")).unwrap();
+            init.u_selection_glow = gl::get_uniform_location(init.program, cstr!("u_selection_glow"))?;
             gl::Uniform1f(init.u_selection_glow, 0.0);
 
-            init.u_hover_instance_id = gl::get_uniform_location(init.program, cstr!("u_hover_instance_id")).unwrap();
+            init.u_hover_instance_id = gl::get_uniform_location(init.program, cstr!("u_hover_instance_id"))?;
             gl::Uniform1i(init.u_hover_instance_id, !0);
-            init.u_hover_glow = gl::get_uniform_location(init.program, cstr!("u_hover_glow")).unwrap();
+            init.u_hover_glow = gl::get_uniform_location(init.program, cstr!("u_hover_glow"))?;
             gl::Uniform1f(init.u_hover_glow, 0.0);
 
             init.vao = gl::gen_object(gl::GenVertexArrays);
             gl::BindVertexArray(init.vao);
 
-            let a_ndc = gl::get_attrib_location(init.program, cstr!("a_ndc")).unwrap();
+            let a_ndc = gl::get_attrib_location(init.program, cstr!("a_ndc"))?;
             let vbo_ndc = gl::gen_object(gl::GenBuffers);
             gl::BindBuffer(gl::ARRAY_BUFFER, vbo_ndc);
             let verts: [Point2; 4] = [
@@ -74,8 +68,12 @@ impl RenderSdf {
 
             gl::VertexAttribPointer(a_ndc, 2, gl::FLOAT, gl::FALSE, 0, ptr::null());
             gl::EnableVertexAttribArray(a_ndc);
-        }
-        init
+            Ok(())
+        })().map_err(|err: &CStr| {
+            gl::delete_program_and_attached_shaders(init.program);
+            gl::GlslError::from(format!("Missing/Inactive uniform or attribute: {}", err.to_str().unwrap()))
+        })?;
+        Ok(init)
     }
 
     #[inline]

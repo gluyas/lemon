@@ -63,7 +63,7 @@ pub fn compile_and_link_shaders_from_path(
         }
 
         if result.is_err() {
-            gl::delete_program_and_attached_shaders(program, Some(srcs_and_types.len()));
+            gl::delete_program_and_attached_shaders(program);
         }
         result.map_err(GlslError::from)
     }
@@ -132,21 +132,15 @@ pub fn link_shaders(shaders: &[GLuint]) -> Result<GLuint, GlslError> {
     }
 }
 
-pub fn delete_program_and_attached_shaders(program: GLuint, max_shaders: Option<usize>) {
+pub fn delete_program_and_attached_shaders(program: GLuint) {
     unsafe {
-        let max_shaders = match max_shaders {
-            Some(max_shaders) => max_shaders as GLint,
-            None => {
-                let mut num_shaders = 0;
-                gl::GetProgramiv(program, gl::ATTACHED_SHADERS, &mut num_shaders as *mut GLint);
-                num_shaders
-            },
-        };
-        let mut shaders_to_delete     = Vec::with_capacity(max_shaders as usize);
+        let mut num_shaders = 0;
+        gl::GetProgramiv(program, gl::ATTACHED_SHADERS, &mut num_shaders as *mut GLint);
+        let mut shaders_to_delete     = Vec::with_capacity(num_shaders as usize);
         let mut shaders_to_delete_len = 0 as GLsizei;
 
         gl::GetAttachedShaders(
-            program, max_shaders, 
+            program, num_shaders, 
             &mut shaders_to_delete_len as *mut GLsizei, 
             shaders_to_delete.as_mut_ptr(),
         );

@@ -210,7 +210,7 @@ fn main() {
     };
 
     let mut render = Render::init(max_bodies);
-    let mut render_sdf = RenderSdf::init(max_bodies);
+    let mut render_sdf = RenderSdf::init(max_bodies).unwrap();
     let mut render_sdf_enabled = false;
 
     let mut debug_frame_store             = Jagged::new();
@@ -447,6 +447,12 @@ fn main() {
                 }, .. } => match key {
                     VirtualKeyCode::Q => if let ElementState::Pressed = state {
                         render_sdf_enabled = !render_sdf_enabled;
+                    },
+                    VirtualKeyCode::Grave => { // reload sdf renderer
+                        match RenderSdf::init(max_bodies) {
+                            Ok(new_render_sdf) => render_sdf = new_render_sdf,
+                            Err(glsl_error)    => eprintln!("{}", glsl_error),
+                        }
                     },
                     VirtualKeyCode::A => if let ElementState::Pressed = state {
                         debug_draw_axes = !debug_draw_axes;
