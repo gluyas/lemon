@@ -15,31 +15,33 @@ pub struct DebugRender {
     a_color:    GLuint,
     a_position: GLuint,
 
+    camera: Camera,
+
+    reverse_index: usize,
     draw_cmds: Vec<DrawCmd>,
 }
 
 impl DebugRender {
     pub fn new() -> Self {
-        unsafe {
-            let program = gl::link_shaders(&[
-                gl::compile_shader(
-                    include_bytes!("shader/debug.vert.glsl"), 
-                    gl::VERTEX_SHADER,
-                ).unwrap(),
-                gl::compile_shader(
-                    include_bytes!("shader/debug.frag.glsl"), 
-                    gl::FRAGMENT_SHADER,
-                ).unwrap(),
-            ]).unwrap();
-            let u_camera = gl::get_uniform_location(program, cstr!("u_camera")).unwrap();
+        let program = gl::link_shaders(&[
+            gl::compile_shader(
+                include_bytes!("shader/debug.vert.glsl"), 
+                gl::VERTEX_SHADER,
+            ).unwrap(),
+            gl::compile_shader(
+                include_bytes!("shader/debug.frag.glsl"), 
+                gl::FRAGMENT_SHADER,
+            ).unwrap(),
+        ]).unwrap();
+        let u_camera = gl::get_uniform_location(program, cstr!("u_camera")).unwrap();
 
-            let a_color    = gl::get_attrib_location(program, cstr!("a_color")).unwrap();
-            let a_position = gl::get_attrib_location(program, cstr!("a_position")).unwrap();
+        let a_color    = gl::get_attrib_location(program, cstr!("a_color")).unwrap();
+        let a_position = gl::get_attrib_location(program, cstr!("a_position")).unwrap();
 
-            DebugRender {
-                program, u_camera, a_color, a_position,
-                draw_cmds: Vec::new(),
-            }
+        DebugRender {
+            program, u_camera, a_color, a_position,
+            camera: Camera::default(),
+            draw_cmds: Vec::new(), reverse_index: !0,
         }
     }
 
@@ -51,13 +53,19 @@ impl DebugRender {
         }
     }
 
-    pub fn update_camera(&mut self, camera: &Mat4) {
+    pub fn update_camera(&mut self, camera: &Camera) {
         unsafe { gl_with_temp_state!(
             CURRENT_PROGRAM,
         {
             gl::UseProgram(self.program);
-            gl::UniformMatrix4fv(self.u_camera, 1, gl::FALSE, camera.as_ptr());
+            gl::UniformMatrix4fv(self.u_camera, 1, gl::FALSE, (camera.projection * camera.view).as_ptr());
         }); }
+
+        self.camera = camera.clone();
+    }
+
+    pub fn get_camera(&self) -> &Camera {
+        &self.camera
     }
 
     pub fn draw_ray(&mut self, color: &Vec3, frames: usize, origin: &Point3, direction: &Vec3) {
@@ -141,7 +149,26 @@ impl DebugRender {
         }); }
     }
 
+    pub fn reverse_draw_order_begin(&mut self) {
+        if self.reverse_index != !0 {
+            panic!("DebugRender attemped reverse_draw_order_begin without ending previous sequence");
+        }
+        self.reverse_index = self.draw_cmds.len() - 1;
+    }
+
+    pub fn reverse_draw_order_end(&mut self) {
+        if self.reverse_index == !0 {
+            panic!("DebugRender attemped reverse_draw_order_end without reverse_draw_order_begin");
+        }
+        let reverse_range = self.reverse_index..self.draw_cmds.len();
+        self.draw_cmds[reverse_range].reverse();
+        self.reverse_index = !0;
+    }
+
     pub fn render_frame(&mut self) {
+        if self.reverse_index != !0 {
+            panic!("DebugRender attemped render_frame without ending reversed sequence");
+        }
         if self.draw_cmds.is_empty() { return; }
         unsafe { gl_with_temp_state!(
             CURRENT_PROGRAM,

@@ -1,5 +1,6 @@
 use super::*;
 
+#[derive(Copy, Clone, Debug)]
 #[repr(C)]
 pub struct Camera {
     pub view:       Mat4,
@@ -16,6 +17,12 @@ impl Default for Camera {
 
             position: point3!(),
         }
+    }
+}
+
+impl Camera {
+    pub fn x_y_axes(&self) -> (Vec3, Vec3) {
+        (self.view.row(0).truncate().normalize(), self.view.row(1).truncate().normalize())
     }
 }
 
