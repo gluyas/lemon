@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use super::*;
 
 // GEOMETRIC TYPES
@@ -431,6 +432,233 @@ pub fn overlap_capsule_ray(c: Capsule, r: Ray) -> bool {
 pub fn overlap_capsule_sphere(c: Capsule, s: Sphere) -> bool {
     let closest = closest_on_segment_to_point(c.segment, s.centre);
     (closest - s.centre).magnitude2() <= (c.radius + s.radius).powi(2)
+}
+
+// GILBERT-JOHNSON-KEERTHI ALGORITHM (GJK)
+
+// Based on Casey Muratori's implementation: caseymuratori.com/blog_0003
+pub fn overlap_convex_sets_gilbert_johnson_keerthi<T1: Copy, T2: Copy>(
+    max_iterations: usize, normalize_support_argument: bool,
+    s1: T1, init1: Point3, support1: impl Fn(T1, Vec3) -> Point3,
+    s2: T2, init2: Point3, support2: impl Fn(T2, Vec3) -> Point3,
+    mut debug: Option<&mut DebugRender>,
+) -> bool {
+    // buffer for only 3 simplex points: 4th always stored in local variable
+    let mut simplex     = [vec3!(NAN, NAN, NAN); 3];
+    let mut simplex_len = 0;
+
+    // macro for writing values to simplex
+    macro_rules! set_simplex {
+        ($a:expr, $b:expr, $c:expr) => {
+            let new_simplex = [$a, $b, $c];
+            for i in 0..3 { simplex[i] = new_simplex[i]; }
+            simplex_len = 3;
+        };
+        ($a:expr, $b:expr) => {
+            let new_simplex = [$a, $b];
+            for i in 0..2 { simplex[i] = new_simplex[i]; }
+            simplex_len = 2;
+        };
+        ($a:expr) => {
+            simplex[0] = $a;
+            simplex_len = 1;
+        };
+    };
+
+    // debug visuals setup; causes no allocations if not enabled
+    let mut debug_support1_points = Vec::new();
+    let mut debug_support2_points = Vec::new();
+    if let Some(ref mut debug) = debug {
+        debug.reverse_draw_order_begin();
+
+        debug_support1_points.push(init1);
+        debug_support2_points.push(init2);
+
+        // draw an approximate outline of the full minkowski difference
+        let (x, y) = debug.get_camera().x_y_axes();
+        let billboarded_samples = make_arc_points(point3!(VEC3_0), TAU, x, y, 32).map(|point| {
+            let direction = vec3!(point);
+            let sample    = support1(s1, direction) - support2(s2, -direction);
+            point3!(sample)
+        }).collect::<Vec<Point3>>();
+        debug.draw_line(&color!(0x708090FF).truncate(), 1, &billboarded_samples);
+    }
+
+    // macro for generating the minkowski difference samples
+    // direction is updated every iteration and depends on the simplex relative to the origin
+    let mut direction = init2 - init1;
+    macro_rules! sample_minkowski_difference { () => { {
+        if normalize_support_argument {
+            direction = direction.normalize();
+        }
+        let support1 = support1(s1, direction);
+        let support2 = support2(s2,-direction);
+
+        if debug.is_some() {
+            // draw an L shaped line to the next support points on the volumes
+
+            let prev1 = debug_support1_points.last().unwrap();
+            let proj1 = prev1 + direction * (direction.dot(support1-prev1)) / direction.magnitude2();
+            debug_support1_points.extend_from_slice(&[proj1, support1]);
+
+            let prev2 = debug_support2_points.last().unwrap();
+            let proj2 = prev2 + direction * (direction.dot(support2-prev2)) / direction.magnitude2();
+            debug_support2_points.extend_from_slice(&[proj2, support2]);
+        }
+        support1 - support2
+    } } }
+
+    // initialise simplex
+    set_simplex![sample_minkowski_difference!()];
+    direction = -simplex[0];
+
+    let mut i = 0;
+    let intersection = loop {
+        if i == max_iterations {
+            eprintln!("GJK max iterations reached: {}", max_iterations);
+            break false;
+        }
+        i += 1;
+
+        // generate new sample in direction given by last iteration
+        let new_point = sample_minkowski_difference!();
+        if new_point.dot(direction) < 0.0 {
+            // minkowski difference does not contain the origin: no intersection
+            break false;
+        }
+        simplex_len += 1; // add new_point to simplex (written to array after simplex update)
+
+        // macro which all tests in the do_simplex procedures are based off
+        // checks whether or not moving from new_point in $dir goes towards the origin
+        // this is used to determine which of the simplex's voronoi region the origin is in
+        // the voronoi region defines the next iteration's simplex and search direction
+        macro_rules! towards_origin { ($dir:expr) => {
+            // HACK: works because new_point == $a for all macro invocations in this code
+            ($dir).dot(-new_point) > 0.0
+        } }
+
+        macro_rules! do_simplex_2 { ($a:expr, $b:expr) => { {
+            if let Some(ref mut debug) = debug {
+                let line: [Point3; 2] = unsafe { mem::transmute([
+                    $a, $b
+                ]) };
+                debug.draw_line(&color!(0xFF00FFFF).truncate(), 1, &line);
+            }
+
+            // check if the step from $b to $a passed the orgin
+            let ab = $b - $a;
+            if towards_origin!(ab) {
+                // origin is between $a and $b: use the line segment next iteration
+                // search in direction perpendicular to the line segment, towards the origin
+                set_simplex![$a, $b];
+                direction = (ab).cross(-$a).cross(ab);
+            } else {
+                // did not pass the orign: discard $b from next iteration
+                // search directly towards origin from $a
+                set_simplex![$a];
+                direction = -$a;
+            }
+        } } }
+
+        macro_rules! do_simplex_3 { ($a:expr, $b:expr, $c:expr) => { {
+            if let Some(ref mut debug) = debug {
+                let triangle: [Point3; 4] = unsafe { mem::transmute([
+                    $a, $b, $c, $a,
+                ]) };
+                debug.draw_line(&color!(0xFFFF00FF).truncate(), 1, &triangle);
+            }
+
+            // edge vectors
+            let ab  = $b - $a;
+            let ac  = $c - $a;
+
+            // face normal (CCW winding order)
+            let abc = (ab).cross(ac);
+
+            // first test if origin is in the direction of the ac edge's normal
+            // note that ab and ac are not mutually exclusive, so both always need to be tested
+            if towards_origin!((abc).cross(ac)) {
+                // test two 2-simplices simultaneously, as ab edge is not ruled out yet
+                if towards_origin!(ac) {
+                    // origin lies between $a and $c
+                    set_simplex![$a, $c];
+                    direction = (ac).cross(-$a).cross(ac);
+                } else {
+                    // drop down to 2-simplex case to decide between ab edge, or just $a
+                    do_simplex_2![$a, $b];
+                }
+            } else {
+                // ac edge is ruled out, but still need to check ab
+                if towards_origin!((ab).cross(abc)) {
+                    do_simplex_2![$a, $b];
+                } else {
+                    // neither edge's normal in direction of origin, so use a 3-simplex next iteration
+                    // test which side of the triangle origin is on
+                    if towards_origin!(abc) {
+                        // top: search in direction of the face normal and use the same simplex
+                        set_simplex![$a, $b, $c];
+                        direction = abc;
+                    } else {
+                        // bottom: reverse normal and swap $b and $c to preserve winding order
+                        set_simplex![$a, $c, $b];
+                        direction = -abc;
+                    }
+                }
+            }
+        } } }
+
+        macro_rules! do_simplex_4 { ($a:expr, $b:expr, $c:expr, $d:expr) => { {
+            if let Some(ref mut debug) = debug {
+                let tetrahedron: [Point3; 8] = unsafe { mem::transmute([
+                    $a, $b, $c, $a, $d, $b, $c, $d,
+                ]) };
+                debug.draw_line(&color!(0x00FF00FF).truncate(), 1, &tetrahedron);
+            }
+
+            // edge vectors
+            let ab  = $b - $a;
+            let ac  = $c - $a;
+            let ad  = $d - $a;
+
+            // face normals (CCW winding order)
+            let abc = (ab).cross(ac);
+            let acd = (ac).cross(ad);
+            let adb = (ad).cross(ab);
+
+            // find any face that is looking towards origin, then drop down to 3-simplex procedure
+            if      towards_origin!(abc) { do_simplex_3![$a, $b, $c]; }
+            else if towards_origin!(acd) { do_simplex_3![$a, $c, $d]; }
+            else if towards_origin!(adb) { do_simplex_3![$a, $d, $b]; }
+            else {
+                // origin is contained within tetrahedron: volumes intersect
+                if let Some(ref mut debug) = debug {
+                    let to_origin: [Point3; 7] = unsafe { mem::transmute([
+                        $a, VEC3_0, $b, VEC3_0, $c, VEC3_0, $d,
+                    ]) };
+                    debug.draw_line(&color!(0x0000FFFF).truncate(), 1, &to_origin);
+                }
+
+                break true;
+            }
+        } } }
+
+        match simplex_len {
+            1 => unreachable!(),
+            2 => do_simplex_2![new_point, simplex[0]],
+            3 => do_simplex_3![new_point, simplex[0], simplex[1]],
+            4 => do_simplex_4![new_point, simplex[0], simplex[1], simplex[2]],
+            _ => unreachable!(),
+        }
+    };
+
+    if let Some(ref mut debug) = debug {
+        // finalise debug visuals
+        debug.draw_line(&color!(0xFF0000FF).truncate(), 1, &debug_support1_points);
+        debug.draw_line(&color!(0x0000FFFF).truncate(), 1, &debug_support2_points);
+
+        debug.reverse_draw_order_end();
+    }
+    intersection
 }
 
 // RAYCASTS
