@@ -116,26 +116,29 @@ macro_rules! mat2 {
 
 pub type Real   = f32; // TODO: propagate this
 
-pub type Vec4          = cgmath::Vector4<Real>;
-pub const VEC4_X: Vec4 = vec4!(1.0, 0.0, 0.0, 0.0);
-pub const VEC4_Y: Vec4 = vec4!(0.0, 1.0, 0.0, 0.0);
-pub const VEC4_Z: Vec4 = vec4!(0.0, 0.0, 1.0, 0.0);
-pub const VEC4_W: Vec4 = vec4!(0.0, 0.0, 0.0, 1.0);
-pub const VEC4_0: Vec4 = vec4!(0.0, 0.0, 0.0, 0.0);
-pub const VEC4_1: Vec4 = vec4!(1.0, 1.0, 1.0, 1.0);
+pub type Vec4            = cgmath::Vector4<Real>;
+pub const VEC4_X:   Vec4 = vec4!(1.0, 0.0, 0.0, 0.0);
+pub const VEC4_Y:   Vec4 = vec4!(0.0, 1.0, 0.0, 0.0);
+pub const VEC4_Z:   Vec4 = vec4!(0.0, 0.0, 1.0, 0.0);
+pub const VEC4_W:   Vec4 = vec4!(0.0, 0.0, 0.0, 1.0);
+pub const VEC4_0:   Vec4 = vec4!(0.0, 0.0, 0.0, 0.0);
+pub const VEC4_1:   Vec4 = vec4!(1.0, 1.0, 1.0, 1.0);
+pub const VEC4_NAN: Vec4 = vec4!(NAN, NAN, NAN, NAN);
 
-pub type Vec3   = cgmath::Vector3<Real>;
-pub const VEC3_X: Vec3 = vec3!(1.0, 0.0, 0.0);
-pub const VEC3_Y: Vec3 = vec3!(0.0, 1.0, 0.0);
-pub const VEC3_Z: Vec3 = vec3!(0.0, 0.0, 1.0);
-pub const VEC3_0: Vec3 = vec3!(0.0, 0.0, 0.0);
-pub const VEC3_1: Vec3 = vec3!(1.0, 1.0, 1.0);
+pub type Vec3            = cgmath::Vector3<Real>;
+pub const VEC3_X:   Vec3 = vec3!(1.0, 0.0, 0.0);
+pub const VEC3_Y:   Vec3 = vec3!(0.0, 1.0, 0.0);
+pub const VEC3_Z:   Vec3 = vec3!(0.0, 0.0, 1.0);
+pub const VEC3_0:   Vec3 = vec3!(0.0, 0.0, 0.0);
+pub const VEC3_1:   Vec3 = vec3!(1.0, 1.0, 1.0);
+pub const VEC3_NAN: Vec3 = vec3!(NAN, NAN, NAN);
 
-pub type Vec2   = cgmath::Vector2<Real>;
-pub const VEC2_X: Vec2 = vec2!(1.0, 0.0);
-pub const VEC2_Y: Vec2 = vec2!(0.0, 1.0);
-pub const VEC2_0: Vec2 = vec2!(0.0, 0.0);
-pub const VEC2_1: Vec2 = vec2!(1.0, 1.0);
+pub type Vec2            = cgmath::Vector2<Real>;
+pub const VEC2_X:   Vec2 = vec2!(1.0, 0.0);
+pub const VEC2_Y:   Vec2 = vec2!(0.0, 1.0);
+pub const VEC2_0:   Vec2 = vec2!(0.0, 0.0);
+pub const VEC2_1:   Vec2 = vec2!(1.0, 1.0);
+pub const VEC2_NAN: Vec2 = vec2!(NAN, NAN);
 
 pub type Point3 = cgmath::Point3<Real>;
 pub type Point2 = cgmath::Point2<Real>;

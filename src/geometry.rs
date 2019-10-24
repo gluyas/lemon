@@ -83,6 +83,10 @@ impl Plane {
     pub fn from_point_and_normal(point: Point3, normal: Vec3) -> Self {
         Plane { normal, offset: normal.dot(vec3!(point)) }
     }
+
+    pub fn from_triangle(triangle: &Triangle) -> Self {
+        Self::from_point_and_normal(triangle.points[0], triangle.get_nonunit_normal().normalize())
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -131,6 +135,47 @@ impl Capsule {
     pub fn from_points_and_radius(head: Point3, tail: Point3, radius: Real) -> Self {
         Capsule { segment: Segment { head, tail }, radius }
     }
+}
+
+/// Triangles are stored in counter-clockwise winding order
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+pub struct Triangle {
+    pub points: [Point3; 3],
+}
+
+impl Triangle {
+    pub fn new(points: [Point3; 3]) -> Self {
+        Triangle { points }
+    }
+
+    pub fn get_nonunit_normal(&self) -> Vec3 {
+        (self.points[1] - self.points[0]).cross(self.points[2] - self.points[0])
+    }
+}
+
+/// The four counter-clockwise triangular faces are defined as the following ordered triplets:
+/// `points`[0, 1, 2]
+/// `points`[0, 3, 1]
+/// `points`[1, 3, 2]
+/// `points`[2, 3, 0]
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+pub struct Tetrahedron {
+    pub points: [Point3; 4],
+}
+
+impl Tetrahedron {
+    pub fn new(points: [Point3; 4]) -> Self {
+        Tetrahedron { points }
+    }
+
+    pub fn get_faces(&self) -> [Triangle; 4] { [ 
+        Triangle::new([self.points[0], self.points[1], self.points[2]]),
+        Triangle::new([self.points[0], self.points[3], self.points[1]]),
+        Triangle::new([self.points[1], self.points[3], self.points[2]]),
+        Triangle::new([self.points[2], self.points[3], self.points[0]]),
+    ] }
 }
 
 // CLOSEST POINT FUNCTIONS
@@ -659,6 +704,130 @@ pub fn overlap_convex_sets_gilbert_johnson_keerthi<T1: Copy, T2: Copy>(
         debug.reverse_draw_order_end();
     }
     intersection
+}
+
+// CONVEX POLYTOPES
+
+/// `Polytope` is defined as the intersection of halfspaces
+pub type Polytope = [Plane];
+
+pub fn polytope_contains_point(polytope: &Polytope, point: Point3) -> bool {
+    polytope.iter().all(|plane| (plane.normal).dot(vec3!(point)) <= plane.offset)
+}
+
+pub fn polytope_from_tetrahedron(tetrahedron: &Tetrahedron) -> [Plane; 4] {
+    let mut planes = [Plane::new(VEC3_0, 0.0); 4];
+    let triangles = &tetrahedron.get_faces();
+    for i in 0..4 {
+        planes[i] = Plane::from_triangle(&triangles[i]);
+    }
+    planes
+}
+
+pub fn get_planes_intersection(planes: [Plane; 3]) -> Option<Point3> {
+    Mat3::from_cols(planes[0].normal, planes[1].normal, planes[2].normal)
+        .transpose()
+        .invert()
+        .map(|inverse| inverse.transform_point(point3!(
+            planes[0].offset, planes[1].offset, planes[2].offset
+        )))
+}
+
+pub fn polytope_get_supporting_point(polytope: &Polytope, direction: Vec3) -> Option<Point3> {
+    // always return a point that is the intersection of 3 planes
+    if polytope.len() < 3 {
+        return None;
+    }
+
+    // get the first combination of planes which intersect on the correct side of the polytope
+    let mut intersection  = None;
+    let mut planes        = [Plane::new(VEC3_NAN, NAN); 3];
+    let mut plane_indices = [!0; 3];
+
+    for i in 0..(polytope.len()-2) {
+        let i_facing = polytope[i].normal.dot(direction) >= 0.0;
+
+        for j in i..(polytope.len()-1) {
+            let j_facing = polytope[j].normal.dot(direction) >= 0.0;
+            if 1 > i_facing as u8 + j_facing as u8 { continue; }
+
+            for k in i..(polytope.len()-0) {
+                let k_facing = polytope[k].normal.dot(direction) >= 0.0;
+                if 2 > i_facing as u8 + j_facing as u8 + k_facing as u8 { continue; }
+
+                if let Some(point) = get_planes_intersection(planes) {
+                    // verify `point` is contained within the other halfspaces of the polytope
+                    if polytope_contains_point(&polytope[( 0 )..i], point)
+                    && polytope_contains_point(&polytope[(i+1)..j], point)
+                    && polytope_contains_point(&polytope[(j+1)..k], point)
+                    && polytope_contains_point(&polytope[(k+1).. ], point)
+                    {
+                        planes        = [polytope[i], polytope[j], polytope[k]];
+                        plane_indices = [i, j, k];
+                        intersection  = Some(point);
+                    }
+                }
+            }
+        }
+    }
+
+    // hill-climb along polytope edges
+    if let Some(mut intersection) = intersection { loop {
+        // determine edge with highest dot product with `direction`
+        let mut worst_plane_index = !0;
+        let mut best_edge         = VEC3_NAN;
+        let mut best_edge_dot     = 0.0; // don't consider edges with negative dot product
+
+        let vertex_normal = planes[0].normal + planes[1].normal + planes[2].normal;
+        for i in 0..3 {
+            let edge = (planes[(i+1)%3].normal).cross(planes[(i+2)%3].normal);
+            // sign of vertex normal dot product corrects `edge` to point away from `intersection`
+            let sign = (edge).dot(vertex_normal).signum();
+            let dot  = sign * ((edge).dot(direction));
+            if dot > best_edge_dot {
+                best_edge         = sign*edge;
+                best_edge_dot     = dot;
+                worst_plane_index = i;
+            }
+        }
+
+        let edge_ray = if worst_plane_index != !0 {
+            Ray { origin: intersection, vector: best_edge }
+        } else {
+            // no edges had positive dot product: current point is a local (thus global) maximum
+            break Some(intersection);
+        };
+
+        // find the vertex that the best edge connects to
+        let mut min_t = INFINITY;
+        for i in 0..polytope.len() {
+            if i == plane_indices[0] || i == plane_indices[1] || i == plane_indices[2] {
+                // don't try intersecting a plane with itself or the worst plane from before
+                continue;
+            }
+            let plane_dot = polytope[i].normal.dot(edge_ray.vector);
+            if plane_dot <= 0.0 {
+                // plane must be facing away from the edge to be on the outside of polytope
+                continue;
+            }
+            let t = polytope[i].offset - polytope[i].normal.dot(vec3!(edge_ray.origin)) / plane_dot;
+            if t > 0.0 && t < min_t {
+                // because `edge_ray` is verified to be contained in/on the polytope, its closest
+                // intersection also must be contained
+                min_t                            = t;
+                intersection                     = edge_ray.eval(t);
+                plane_indices[worst_plane_index] = i;
+                planes       [worst_plane_index] = polytope[i];
+            }
+        }
+        if min_t == INFINITY {
+            // no plane intersected the edge, so the polytope is unbounded in `direction`
+            break None;
+        }
+    } } else {
+        // every possibility exhausted: no three intersecting planes
+        None
+    }
 }
 
 // RAYCASTS
