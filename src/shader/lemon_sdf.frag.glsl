@@ -76,7 +76,7 @@ float sdLemonPerfect(vec3 p, Lemon lemon)
         }
     }
     // general case
-    return length(lemon.focus*-(y/sqrt(y2)) - s) - lemon.radius;
+    return length(s + lemon.focus*(y/sqrt(y2))) - lemon.radius;
 }
 
 float sdLemon(vec3 p, Lemon lemon)
@@ -86,7 +86,7 @@ float sdLemon(vec3 p, Lemon lemon)
 
     vec3 y = s - t*lemon.vertical;
 
-    return length(lemon.focus*-normalize(y) - s) - lemon.radius;
+    return length(s + lemon.focus*normalize(y)) - lemon.radius;
 }
 
 vec3 normalLemon(vec3 p, Lemon lemon) {
@@ -95,15 +95,15 @@ vec3 normalLemon(vec3 p, Lemon lemon) {
 
     vec3 y = s - t*lemon.vertical;
 
-    return normalize(lemon.focus*-normalize(y) - s);
+    return normalize(s + lemon.focus*normalize(y));
 }
 
 float sdLemonAxisAlignedRelative(vec3 s, float radius, float focus) {
-    return length(vec3(focus*normalize(-s.xy) - s.xy, -s.z)) - radius;
+    return length(vec3(s.xy + focus*normalize(s.xy), s.z)) - radius;
 }
 
 vec3 normalLemonAxisAlignedRelative(vec3 s, float radius, float focus) {
-    return normalize(vec3(focus*normalize(-s.xy) - s.xy, -s.z));
+    return normalize(vec3(s.xy + focus*normalize(s.xy), s.z));
 }
 
 float sdLemonClipped(vec3 p, int id) {
@@ -118,7 +118,7 @@ float sdLemonClipped(vec3 p, int id) {
     float sd = sdLemonAxisAlignedRelative(s, radius, focus);
     for (int j = 0; j < MAX_CLIPS; j++) {
         vec4 clip  = u_lemon_clips[id+j];
-        float clipped = clip.w - dot(s, clip.xyz);
+        float clipped = dot(s, clip.xyz) - clip.w;
         if (clipped > sd) {
             sd = clipped;
         }
@@ -139,7 +139,7 @@ vec3 normalLemonClipped(vec3 p, int id) {
     vec3 normal = normalLemonAxisAlignedRelative(s, radius, focus);
     for (int j = 0; j < MAX_CLIPS; j++) {
         vec4 clip  = u_lemon_clips[id+j];
-        float clipped = clip.w - dot(s, clip.xyz);
+        float clipped = dot(s, clip.xyz) - clip.w;
         if (clipped > sd) {
             sd = clipped;
             normal = clip.xyz;
