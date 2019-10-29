@@ -1,5 +1,7 @@
 use super::*;
 
+const FLOATS_PER_LEMON: usize = 9;
+
 #[derive(Default)]
 pub struct RenderSdf {
     program: GLuint,
@@ -7,10 +9,11 @@ pub struct RenderSdf {
     u_camera_inverse: GLint,
     u_camera_pos: GLint,
 
-    u_lemons:     GLint,
-    u_lemons_len: GLint,
-    lemons_for_shader: Box<[f32]>,
-    lemons_for_shader_dirty: bool,
+    u_lemons:      GLint,
+    u_lemon_clips: GLint,
+    u_lemons_len:  GLint,
+    lemons_buffer: Box<[f32]>,
+    lemons_buffer_dirty: bool,
 
     u_selection_instance_id: GLint,
     u_selection_glow: GLint,
@@ -31,11 +34,6 @@ impl RenderSdf {
         ])?;
 
         (|| unsafe {
-            init.u_lemons = gl::get_uniform_location(init.program, cstr!("u_lemons"))?;
-            init.u_lemons_len = gl::get_uniform_location(init.program, cstr!("u_lemons_len"))?;
-            init.lemons_for_shader = vec![0.0; max_bodies * 8].into_boxed_slice();
-            init.lemons_for_shader_dirty = true;
-
             init.u_camera_inverse= gl::get_uniform_location(init.program, cstr!("u_camera_inverse"))?;
             init.u_camera_pos= gl::get_uniform_location(init.program, cstr!("u_camera_pos"))?;
 
@@ -68,6 +66,13 @@ impl RenderSdf {
 
             gl::VertexAttribPointer(a_ndc, 2, gl::FLOAT, gl::FALSE, 0, ptr::null());
             gl::EnableVertexAttribArray(a_ndc);
+
+            init.u_lemons = gl::get_uniform_location(init.program, cstr!("u_lemons"))?;
+            init.u_lemon_clips = gl::get_uniform_location(init.program, cstr!("u_lemon_clips"))?;
+            init.u_lemons_len = gl::get_uniform_location(init.program, cstr!("u_lemons_len"))?;
+            init.lemons_buffer = vec![0.0; max_bodies * FLOATS_PER_LEMON].into_boxed_slice();
+            init.lemons_buffer_dirty = true;
+
             Ok(())
         })().map_err(|err: &CStr| {
             gl::delete_program_and_attached_shaders(init.program);
@@ -80,10 +85,12 @@ impl RenderSdf {
     pub fn render_lemons(&mut self, n: usize) {
         unsafe {
             gl::UseProgram(self.program);
-            gl::UniformMatrix2x4fv(
+
+            debug_assert_eq!(FLOATS_PER_LEMON, 9);
+            gl::UniformMatrix3fv(
                 self.u_lemons,
                 n as GLsizei, gl::FALSE, 
-                self.lemons_for_shader.as_ptr()
+                self.lemons_buffer.as_ptr()
             );
             gl::Uniform1ui(self.u_lemons_len, n as _);
 
@@ -94,7 +101,7 @@ impl RenderSdf {
                 4,
             );
         }
-        self.lemons_for_shader_dirty = false;
+        self.lemons_buffer_dirty = false;
     }
 
     #[inline]
@@ -112,16 +119,27 @@ impl RenderSdf {
         lemon: Option<&Lemon>,
     ) {
         if let Some(lemon) = lemon {
-            let mut dest = &mut self.lemons_for_shader[8*id..8*(id+1)];
+            let mut dest = &mut self.lemons_buffer[FLOATS_PER_LEMON*id..FLOATS_PER_LEMON*(id+1)];
             write_lemon_for_shader(lemon, &mut dest);
         };
-        self.lemons_for_shader_dirty = true;
+        self.lemons_buffer_dirty = true;
     }
 
     #[inline]
     pub fn update_lemons(&mut self, lemons: &[Lemon]) {
-        write_lemons_for_shader(lemons, &mut self.lemons_for_shader);
-        self.lemons_for_shader_dirty = true;
+        write_lemons_for_shader(lemons, &mut self.lemons_buffer);
+        self.lemons_buffer_dirty = true;
+    }
+
+    pub fn update_clipping_planes(&mut self, clips: &[[Plane; MAX_CLIPS_PER_LEMON]]) {
+        unsafe {
+            gl::UseProgram(self.program);
+            gl::Uniform4fv(
+                self.u_lemon_clips, 
+                (clips.len() * MAX_CLIPS_PER_LEMON) as _,
+                clips.as_ptr() as *const f32,
+            );
+        }
     }
 
     #[inline]
@@ -158,29 +176,30 @@ impl RenderSdf {
 }
 
 pub fn write_lemon_for_shader(lemon: &Lemon, dest: &mut [f32]) {
-    if dest.len() != 8 { 
-        panic!("incorrect slice length for write_lemon_for_sdf_shader");
+    debug_assert_eq!(FLOATS_PER_LEMON, 9);
+    if dest.len() != FLOATS_PER_LEMON { 
+        panic!("incorrect slice length for write_lemon_for_shader");
     }
 
     dest[0+0] = lemon.phys.position.x;
     dest[0+1] = lemon.phys.position.y;
     dest[0+2] = lemon.phys.position.z;
 
-    let lemon_vertical = lemon.get_vertical() * lemon.scale;
-    dest[4+0] = lemon_vertical.x;
-    dest[4+1] = lemon_vertical.y;
-    dest[4+2] = lemon_vertical.z;
+    dest[3+0] = -lemon.phys.orientation.v.x;
+    dest[3+1] = -lemon.phys.orientation.v.y;
+    dest[3+2] = -lemon.phys.orientation.v.z;
+    dest[6+0] = lemon.phys.orientation.s;
 
-    dest[0+3] = lemon.radius;
+    dest[6+1] = lemon.radius;
 
-    dest[4+3] = lemon.focal_radius();
+    dest[6+2] = lemon.focal_radius();
 }
 
 pub fn write_lemons_for_shader(lemons: &[Lemon], dest: &mut [f32]) {
-    if dest.len() < 8*lemons.len() { 
-        panic!("insufficient slice length for write_lemons_for_sdf_shader");
+    if dest.len() < 9*lemons.len() { 
+        panic!("insufficient slice length for write_lemons_for_shader");
     }
     for (i, lemon) in lemons.iter().enumerate() {
-        write_lemon_for_shader(lemon, &mut dest[8*i..8*(i+1)]);
+        write_lemon_for_shader(lemon, &mut dest[FLOATS_PER_LEMON*i..FLOATS_PER_LEMON*(i+1)]);
     }
 }

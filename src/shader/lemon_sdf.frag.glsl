@@ -1,7 +1,16 @@
 #version 330
 
+vec3 quat_rotate(vec4 q, vec3 v) {
+    return 2.0*(dot(q.xyz, v)*q.xyz + q.w*cross(q.xyz, v)) + v*(q.w*q.w - dot(q.xyz, q.xyz));
+}
+
+vec4 quat_inverse(vec4 q) {
+    return vec4(-q.xyz, q.w);
+}
+
 // TODO: integrate with consts defined in main.rs
-#define MAX_LEMONS 256
+#define MAX_LEMONS 64
+#define MAX_CLIPS 6
 
 in vec2 v_ndc;
 
@@ -16,10 +25,14 @@ vec3 getCameraRay() {
     return normalize(target.xyz - origin.xyz);
 }
 
-// position [0][0..2], radius [0][3]
-// vertical [1][0..2], focus  [1][3]
-uniform mat2x4[MAX_LEMONS] u_lemons;
-uniform uint               u_lemons_len;
+// [0][0,1,2] = position
+// [1][0,1,2] = inverse rotation (vector part)
+// [2][0]     = inverse rotation (scalar part)
+// [2][1]     = lemon radius
+// [2][2]     = lemon focal radius
+uniform mat3[MAX_LEMONS]           u_lemons;
+uniform vec4[MAX_LEMONS*MAX_CLIPS] u_lemon_clips;
+uniform uint                       u_lemons_len;
 
 uniform int   u_hover_instance_id;
 uniform float u_hover_glow;
@@ -38,6 +51,7 @@ uniform float u_selection_glow;
 //
 // `vertical`, `radius`, and `focus` are multiplied by the scale of the lemon
 //
+// UNUSED: using quaternion rotations instead to simplify clipping planes
 struct Lemon
 {
     vec3 position;
@@ -75,12 +89,70 @@ float sdLemon(vec3 p, Lemon lemon)
     return length(lemon.focus*-normalize(y) - s) - lemon.radius;
 }
 
+vec3 normalLemon(vec3 p, Lemon lemon) {
+    vec3 s = p - lemon.position;
+    float t = dot(s, lemon.vertical) / dot(lemon.vertical, lemon.vertical);
+
+    vec3 y = s - t*lemon.vertical;
+
+    return normalize(lemon.focus*-normalize(y) - s);
+}
+
+float sdLemonAxisAlignedRelative(vec3 s, float radius, float focus) {
+    return length(vec3(focus*normalize(-s.xy) - s.xy, -s.z)) - radius;
+}
+
+vec3 normalLemonAxisAlignedRelative(vec3 s, float radius, float focus) {
+    return normalize(vec3(focus*normalize(-s.xy) - s.xy, -s.z));
+}
+
+float sdLemonClipped(vec3 p, int id) {
+    mat3 mat = u_lemons[id];
+
+    float radius = mat[2][1];
+    float focus  = mat[2][2];
+    // translate then rotate p into the lemon's relative, oriented space
+    vec4 q = vec4(mat[1], mat[2][0]);
+    vec3 s = quat_rotate(q, p - mat[0]);
+
+    float sd = sdLemonAxisAlignedRelative(s, radius, focus);
+    for (int j = 0; j < MAX_CLIPS; j++) {
+        vec4 clip  = u_lemon_clips[id+j];
+        float clipped = clip.w - dot(s, clip.xyz);
+        if (clipped > sd) {
+            sd = clipped;
+        }
+    }
+    return sd;
+}
+
+vec3 normalLemonClipped(vec3 p, int id) {
+    mat3 mat = u_lemons[id];
+
+    float radius = mat[2][1];
+    float focus  = mat[2][2];
+    // translate then rotate p into the lemon's relative, oriented space
+    vec4 q = vec4(mat[1], mat[2][0]);
+    vec3 s = quat_rotate(q, p - mat[0]);
+
+    float sd = sdLemonAxisAlignedRelative(s, radius, focus);
+    vec3 normal = normalLemonAxisAlignedRelative(s, radius, focus);
+    for (int j = 0; j < MAX_CLIPS; j++) {
+        vec4 clip  = u_lemon_clips[id+j];
+        float clipped = clip.w - dot(s, clip.xyz);
+        if (clipped > sd) {
+            sd = clipped;
+            normal = clip.xyz;
+        }
+    }
+    return quat_rotate(quat_inverse(q), normal);
+}
+
 float sdWorld(vec3 p, out int id) {
     float min_sd = 2000.0;
     for (int i = 0; i < int(u_lemons_len); i++) {
-        mat2x4 mat = u_lemons[i];
-        Lemon lemon = Lemon(mat[0].xyz, mat[1].xyz, mat[0].w, mat[1].w);
-        float sd = sdLemon(p, lemon);
+        // TODO: raycast clipping planes
+        float sd = sdLemonClipped(p, i);
         if (sd < min_sd) {
             min_sd = sd;
             id = i;
@@ -107,7 +179,9 @@ void main() {
     }
 
     if (ray_depth <= 1000.0) {
-        gl_FragColor = vec4(1.0, 0.8, 0.2, 1.0);
+        vec3 normal = normalLemonClipped(ray_point, id);
+        gl_FragColor = vec4(normal, 1.0);
+        //gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
 
         float glow = 0.0;
         if (id == u_hover_instance_id)     glow += u_hover_glow;
