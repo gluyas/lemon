@@ -1,6 +1,6 @@
 [![preview img with link to demo](https://i.imgur.com/4rFLvma.png)](https://youtu.be/zo6fOU6ERJ0)
 
-v0.2.0 build: [releases/tag/v0.2.0](https://github.com/gluyas/lemon/releases/tag/v0.2.0)  
+v0.2.1 build: [releases/tag/v0.2.1](https://github.com/gluyas/lemon/releases/tag/v0.2.1)  
 Demo video: https://youtu.be/zo6fOU6ERJ0
 
 # Lemon
@@ -29,6 +29,7 @@ Work-in-progress interactive toy. Written (mostly) from scratch, in Rust. Curren
 
 | Toggle | Debug Visualisation |
 | :----: | ------------------- |
+| `Q` | Work-in-progress SDF renderer |
 | `A` | Model-space transform axes |
 | `S` | Torus cross-section |
 | `H` | Performance histogram |

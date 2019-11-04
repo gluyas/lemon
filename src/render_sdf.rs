@@ -28,10 +28,18 @@ impl RenderSdf {
     #[inline]
     pub fn init(max_bodies: usize) -> Result<Self, gl::GlslError> {
         let mut init = RenderSdf::default();
-        init.program = gl::compile_and_link_shaders_from_path(&[
-            (&"src/shader/lemon_sdf.vert.glsl", gl::VERTEX_SHADER),
-            (&"src/shader/lemon_sdf.frag.glsl", gl::FRAGMENT_SHADER),
-        ])?;
+        #[cfg(debug_assertions)] {
+            init.program = gl::compile_and_link_shaders_from_path(&[
+                (&"src/shader/lemon_sdf.vert.glsl", gl::VERTEX_SHADER),
+                (&"src/shader/lemon_sdf.frag.glsl", gl::FRAGMENT_SHADER),
+            ])?;
+        } 
+        #[cfg(not(debug_assertions))] {
+            init.program = gl::link_shaders(&[
+                gl::compile_shader(include_bytes!("shader/lemon_sdf.vert.glsl"), gl::VERTEX_SHADER)?,
+                gl::compile_shader(include_bytes!("shader/lemon_sdf.frag.glsl"), gl::FRAGMENT_SHADER)?,
+            ])?
+        }
 
         (|| unsafe {
             init.u_camera_inverse= gl::get_uniform_location(init.program, cstr!("u_camera_inverse"))?;

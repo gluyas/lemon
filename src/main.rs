@@ -146,6 +146,10 @@ const DEFAULT_MAX_BODIES: usize = 256;
 const DEFAULT_WIDTH:      usize = 1280;
 const DEFAULT_HEIGHT:     usize = 720;
 
+// these match specific values in the shader
+pub const MAX_BODIES:          usize = 64;
+pub const MAX_CLIPS_PER_LEMON: usize = 1;
+
 fn main() {
     let (vsync, msaa, max_bodies, width, height) = {
         let mut vsync      = DEFAULT_VSYNC;
@@ -174,7 +178,7 @@ fn main() {
                 _    => continue,
             };
         }
-        (vsync, msaa, max_bodies, width, height)
+        (vsync, msaa, MAX_BODIES, width, height)
     };
     let aspect     = width as f32 / height as f32;
     if max_bodies <= 15  { panic!("max bodies must be greater than 15"); }
@@ -212,6 +216,9 @@ fn main() {
     let mut render = Render::init(max_bodies);
     let mut render_sdf = RenderSdf::init(max_bodies).unwrap();
     let mut render_sdf_enabled = false;
+    render_sdf.update_clipping_planes(&(0..max_bodies).map(|_| 
+        [Plane::new(random::<Vec3>().normalize(), 0.25); MAX_CLIPS_PER_LEMON]
+    ).collect::<Vec<_>>());
 
     let mut debug_frame_store             = Jagged::new();
     let mut debug_frame_current           = 0;
@@ -224,6 +231,7 @@ fn main() {
 
     macro_rules! spawn_lemon { () => {
         if lemons.len() >= max_bodies { return; }
+        let id = lemons.len();
 
         let scale = LEMON_SCALE_MIN + (LEMON_SCALE_MAX-LEMON_SCALE_MIN) * random::<f32>();
         let s     = LEMON_S_MIN + (LEMON_S_MAX-LEMON_S_MIN) * random::<f32>();
@@ -235,10 +243,8 @@ fn main() {
         render.update_lemon(lemons.len(), Some(&s), Some(&color), None);
 
         reset_lemon(&mut new_lemon);
-        if lemons.len() > 0 
-        && debug_frame_current < lemon_spawn_frame + LEMON_SPAWN_MULTI_PERIOD 
-        {
-            new_lemon.phys.position.z = lemons[lemons.len()-1].phys.position.z 
+        if id > 0 && debug_frame_current < lemon_spawn_frame + LEMON_SPAWN_MULTI_PERIOD {
+            new_lemon.phys.position.z = lemons[id-1].phys.position.z 
                                       + LEMON_SPAWN_MULTI_OFFSET;
         }
         lemon_spawn_frame = debug_frame_current;
@@ -448,11 +454,16 @@ fn main() {
                     VirtualKeyCode::Q => if let ElementState::Pressed = state {
                         render_sdf_enabled = !render_sdf_enabled;
                     },
-                    VirtualKeyCode::Grave => { // reload sdf renderer
+                    VirtualKeyCode::Grave => if let ElementState::Pressed = state {
+                        // reload sdf renderer
                         match RenderSdf::init(max_bodies) {
                             Ok(new_render_sdf) => render_sdf = new_render_sdf,
                             Err(glsl_error)    => eprintln!("{}", glsl_error),
                         }
+                        // HACK: resets clipping planes
+                        render_sdf.update_clipping_planes(&(0..max_bodies).map(|_| 
+                            [Plane::new(random::<Vec3>().normalize(), 0.25); MAX_CLIPS_PER_LEMON]
+                        ).collect::<Vec<_>>());
                     },
                     VirtualKeyCode::A => if let ElementState::Pressed = state {
                         debug_draw_axes = !debug_draw_axes;
@@ -642,12 +653,10 @@ fn main() {
                 camera_lerp_point + camera_direction,
                 VEC3_Z,
             );
-        debug_histogram.add_bar_segment("",
-            short_color(0, 31, 31, true), get_histogram_bar_height(frame_sync_time.elapsed()),
-        );
+
             render.update_camera(&camera);
             render_sdf.update_camera(&camera);
-            debug.update_camera(&(camera.projection * camera.view));
+            debug.update_camera(&camera);
 
             mouse_ray_needs_update = true;
             camera_needs_update    = false;
@@ -1098,7 +1107,7 @@ fn main() {
         frame_sync_time  = frame_next_sync_time;
 
         // ADVANCE FRAME COUNTER
-        if !debug_pause { debug_frame_current += 1;}
+        if !debug_pause && !debug_lemon_party { debug_frame_current += 1;}
     }
 
     #[cfg(target_os = "windows")] unsafe { timeEndPeriod(sleep_resolution_ms); }
@@ -1205,6 +1214,15 @@ fn make_line_strip_capsule_billboard(
         "make_line_strip_capsule calculated incorrect capacity"
     );
     points
+}
+
+fn make_line_strip_plane(
+    plane: Plane, step: Real, count: usize,
+) -> Vec<Point3> {
+    let origin = Point3::from_vec(plane.normal*plane.offset);
+    let x = get_perpendicular(plane.normal).normalize();
+    let y = plane.normal.cross(x);
+    make_line_strip_grid(origin, (x*step, y*step), count)
 }
 
 fn make_line_strip_grid(
