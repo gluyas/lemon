@@ -10,7 +10,7 @@ vec4 quat_inverse(vec4 q) {
 
 // TODO: integrate with consts defined in main.rs
 #define MAX_LEMONS 64
-#define MAX_CLIPS 6
+#define MAX_CLIPS 1
 
 in vec2 v_ndc;
 
@@ -133,7 +133,7 @@ float sdLemonClipped(vec3 p, int id) {
     return sd;
 }
 
-vec3 normalLemonClipped(vec3 p, int id) {
+vec3 normalLemonClipped(vec3 p, int id, out int plane) {
     mat3 mat = u_lemons[id];
 
     float radius = mat[2][1];
@@ -144,19 +144,21 @@ vec3 normalLemonClipped(vec3 p, int id) {
 
     float sd = sdLemonAxisAlignedRelative(r, radius, focus);
     vec3 normal = normalLemonAxisAlignedRelative(r, radius, focus);
+    plane = -1;
     for (int j = 0; j < MAX_CLIPS; j++) {
         vec4 clip  = u_lemon_clips[id+j];
         float clipped = dot(r, clip.xyz) - clip.w;
         if (clipped > sd) {
             sd = clipped;
             normal = clip.xyz;
+            plane = j;
         }
     }
     return quat_rotate(quat_inverse(q), normal);
 }
 
 float sdWorld(vec3 p, out int id) {
-    float min_sd = 2000.0;
+    float min_sd = 1000.0;
     for (int i = 0; i < int(u_lemons_len); i++) {
         // TODO: raycast clipping planes
         float sd = sdLemonClipped(p, i);
@@ -173,29 +175,51 @@ void main() {
     vec3 ray_vector = getCameraRay();
     float ray_depth = 0.0;
 
-    int i = 0;
-    int id = -1;
-    while (ray_depth <= 1000.0) {
-        if (++i >= 128) { break; }
-        float sd = sdWorld(ray_point, id);
-        ray_depth += sd;
-        if (sd <= 0.0) {
+    int first_id = -1;
+    int reflections = 0;
+    vec3 color = vec3(0.0);
+    while (reflections <= 3) {
+        int id = -1;
+        for (int i = 0; i < 64; i++) {
+            int test_id;
+            float sd = sdWorld(ray_point, test_id);
+            if (test_id == -1) break;
+            ray_depth += sd;
+            ray_point += sd * ray_vector;
+            if (sd <= 0.002) {
+                id = test_id; 
+                break;
+            }
+        }
+        if (id != -1) {
+            if (first_id == -1) {
+                first_id = id;
+            }
+            reflections += 1;
+            int plane;
+            vec3 normal = normalLemonClipped(ray_point, id, plane);
+            if (plane == -1) {
+                color += (dot(normal, vec3(1.0)) + 2.0)*vec3(1.0, 0.7, 0.0)/2.0;
+                break;
+            } else {
+                color += vec3(1.0, 0.7, 0.0) / 2.5;
+                ray_point  = ray_point + normal*0.005;
+                ray_vector = reflect(ray_vector, normal);
+            }
+        } else {
+            color += vec3(0.5, 0.9, 0.9);
             break;
         }
-        ray_point += sd * ray_vector;
     }
 
-    if (ray_depth <= 1000.0) {
-        vec3 normal = normalLemonClipped(ray_point, id);
-        gl_FragColor = vec4(normal, 1.0);
-        //gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
-
-        float glow = 0.0;
-        if (id == u_hover_instance_id)     glow += u_hover_glow;
-        if (id == u_selection_instance_id) glow += u_selection_glow;
-        gl_FragColor = mix(gl_FragColor, vec4(1.0), glow);
-    } else {
+    if (reflections == 0) {
         discard;
+    } else {
+        color /= float(reflections);
+        float glow = 0.0;
+        if (first_id == u_hover_instance_id)     glow += u_hover_glow;
+        if (first_id == u_selection_instance_id) glow += u_selection_glow;
+        gl_FragColor = vec4(mix(color, vec3(1.0), glow), 1.0);
     }
 }
 
